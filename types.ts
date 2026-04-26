@@ -19,6 +19,8 @@ export interface PlacedLayer {
   scale: number; // 1 = 100%
   rotation: number;
   opacity?: number;
+  isLocked?: boolean;
+  groupId?: string;
 }
 
 export interface GeneratedMockup {

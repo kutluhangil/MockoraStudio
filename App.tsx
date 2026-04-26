@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2 } from 'lucide-react';
+import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2, Lock, Unlock, GripVertical } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from './components/Button';
 import { FileUploader } from './components/FileUploader';
@@ -475,8 +475,8 @@ export default function App() {
   const [layersHistory, setLayersHistory] = useState<PlacedLayer[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [draftLogos, setDraftLogos] = useState<PlacedLayer[] | null>(null);
-  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
-
+  const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
+  
   const placedLogos = draftLogos !== null ? draftLogos : (layersHistory[historyIndex] || []);
 
   const pushHistory = (newLogos: PlacedLayer[]) => {
@@ -489,29 +489,29 @@ export default function App() {
   const handleUndo = () => {
     if (historyIndex > 0) {
       setHistoryIndex(historyIndex - 1);
-      setSelectedLayerId(null);
+      setSelectedLayerIds([]);
     }
   };
 
   const handleRedo = () => {
     if (historyIndex < layersHistory.length - 1) {
       setHistoryIndex(historyIndex + 1);
-      setSelectedLayerId(null);
+      setSelectedLayerIds([]);
     }
   };
 
   const updateSelectedLayerProperties = (updates: Partial<PlacedLayer>) => {
-    if (!selectedLayerId) return;
+    if (selectedLayerIds.length === 0) return;
     const newLogos = (layersHistory[historyIndex] || []).map(l => 
-        l.uid === selectedLayerId ? { ...l, ...updates } : l
+        selectedLayerIds.includes(l.uid) ? { ...l, ...updates } : l
     );
     pushHistory(newLogos);
   };
 
   const alignSelected = (alignType: 'left' | 'right' | 'top' | 'bottom' | 'center-x' | 'center-y') => {
-    if (!selectedLayerId) return;
+    if (selectedLayerIds.length === 0) return;
     const newLogos = (layersHistory[historyIndex] || []).map(l => {
-        if (l.uid !== selectedLayerId) return l;
+        if (!selectedLayerIds.includes(l.uid)) return l;
         let newX = l.x;
         let newY = l.y;
         if (alignType === 'left') newX = 10;
@@ -557,11 +557,63 @@ export default function App() {
   // State for Dragging
   const canvasRef = useRef<HTMLDivElement>(null);
   const [draggedItem, setDraggedItem] = useState<{ uid: string, startX: number, startY: number, initX: number, initY: number } | null>(null);
+  const [guides, setGuides] = useState<{ x?: number, y?: number } | null>(null);
+  const [draggedLayerIdx, setDraggedLayerIdx] = useState<number | null>(null);
 
   // Demo assets on load
   useEffect(() => {
     // Initial load logic here if needed
   }, []);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    if (view !== 'studio') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        if (selectedLayerIds.length > 0) {
+           const layersToRemove = (layersHistory[historyIndex] || []).filter(l => selectedLayerIds.includes(l.uid) && !l.isLocked);
+           if (layersToRemove.length > 0) {
+              const uidsToRemove = layersToRemove.map(l => l.uid);
+              pushHistory(placedLogos.filter(l => !uidsToRemove.includes(l.uid)));
+              setSelectedLayerIds(prev => prev.filter(id => !uidsToRemove.includes(id)));
+           }
+        }
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        if (selectedLayerIds.length > 0) {
+           e.preventDefault();
+           const layersToDup = (layersHistory[historyIndex] || []).filter(l => selectedLayerIds.includes(l.uid));
+           if (layersToDup.length > 0) {
+              const newLayers = layersToDup.map(l => ({ ...l, uid: Math.random().toString(36).substr(2, 9), x: l.x + 5, y: l.y + 5 }));
+              pushHistory([...(layersHistory[historyIndex] || []), ...newLayers]);
+              setSelectedLayerIds(newLayers.map(l => l.uid));
+           }
+        }
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
+        if (selectedLayerIds.length > 0) {
+           e.preventDefault();
+           const layersToLock = (layersHistory[historyIndex] || []).filter(l => selectedLayerIds.includes(l.uid));
+           if (layersToLock.length > 0) {
+              // If all selected are locked, unlock them. Otherwise, lock all.
+              const allLocked = layersToLock.every(l => l.isLocked);
+              updateSelectedLayerProperties({ isLocked: !allLocked });
+           }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [view, historyIndex, layersHistory, selectedLayerIds]);
 
   // -- LOGO PLACEMENT HANDLERS --
   const wheelTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -577,17 +629,45 @@ export default function App() {
       opacity: 1
     };
     pushHistory([...placedLogos, newLayer]);
-    setSelectedLayerId(newLayer.uid);
+    setSelectedLayerIds([newLayer.uid]);
   };
 
   const removeLogoFromCanvas = (uid: string, e?: React.MouseEvent | React.TouchEvent) => {
     e?.stopPropagation();
     pushHistory(placedLogos.filter(l => l.uid !== uid));
-    if (selectedLayerId === uid) setSelectedLayerId(null);
+    if (selectedLayerIds.includes(uid)) setSelectedLayerIds(prev => prev.filter(id => id !== uid));
   };
 
-  const handleStart = (clientX: number, clientY: number, layer: PlacedLayer) => {
-    setSelectedLayerId(layer.uid);
+  const handleDropLayer = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedLayerIdx === null || draggedLayerIdx === targetIndex) return;
+    
+    const newLogos = [...placedLogos];
+    const [draggedItem] = newLogos.splice(draggedLayerIdx, 1);
+    newLogos.splice(targetIndex, 0, draggedItem);
+    
+    pushHistory(newLogos);
+    setDraggedLayerIdx(null);
+  };
+
+  const handleStart = (e: React.MouseEvent | React.TouchEvent, clientX: number, clientY: number, layer: PlacedLayer) => {
+    let newSelectedIds = [...selectedLayerIds];
+
+    if ('shiftKey' in e && e.shiftKey) {
+        if (newSelectedIds.includes(layer.uid)) {
+            newSelectedIds = newSelectedIds.filter(id => id !== layer.uid);
+        } else {
+            newSelectedIds.push(layer.uid);
+        }
+    } else {
+        if (!newSelectedIds.includes(layer.uid)) {
+            newSelectedIds = [layer.uid];
+        }
+    }
+    
+    setSelectedLayerIds(newSelectedIds);
+    if (layer.isLocked) return;
+
     setDraggedItem({
       uid: layer.uid,
       startX: clientX,
@@ -600,17 +680,21 @@ export default function App() {
   const handleMouseDown = (e: React.MouseEvent, layer: PlacedLayer) => {
     e.preventDefault();
     e.stopPropagation();
-    handleStart(e.clientX, e.clientY, layer);
+    handleStart(e, e.clientX, e.clientY, layer);
   };
 
   const handleTouchStart = (e: React.TouchEvent, layer: PlacedLayer) => {
     e.stopPropagation(); // Prevent scrolling initiation if possible
     const touch = e.touches[0];
-    handleStart(touch.clientX, touch.clientY, layer);
+    handleStart(e, touch.clientX, touch.clientY, layer);
   };
 
   const handleWheel = (e: React.WheelEvent, layerId: string) => {
      e.stopPropagation();
+     const currentLogos = layersHistory[historyIndex] || [];
+     const layer = currentLogos.find(l => l.uid === layerId);
+     if (layer?.isLocked) return;
+
      const delta = e.deltaY > 0 ? -0.1 : 0.1;
      
      setDraftLogos(prev => {
@@ -643,14 +727,64 @@ export default function App() {
       const deltaXPercent = (deltaX / rect.width) * 100;
       const deltaYPercent = (deltaY / rect.height) * 100;
 
+      let snappedX = Math.max(0, Math.min(100, draggedItem.initX + deltaXPercent));
+      let snappedY = Math.max(0, Math.min(100, draggedItem.initY + deltaYPercent));
+
+      const newGuides: { x?: number, y?: number } = {};
+      const SNAP_THRESHOLD = 2; // Tighter snap
+
+      // Collect all snap targets: edges, center, and other layers' centers
       const currentLogos = layersHistory[historyIndex] || [];
+      const snapPointsX = [0, 50, 100];
+      const snapPointsY = [0, 50, 100];
+
+      currentLogos.forEach(l => {
+         if (l.uid !== draggedItem.uid && !selectedLayerIds.includes(l.uid)) {
+             snapPointsX.push(l.x);
+             snapPointsY.push(l.y);
+         }
+      });
+
+      // Find closest snap points
+      for (const p of snapPointsX) {
+          if (Math.abs(snappedX - p) < SNAP_THRESHOLD) {
+             snappedX = p;
+             newGuides.x = p;
+             break;
+          }
+      }
+      for (const p of snapPointsY) {
+          if (Math.abs(snappedY - p) < SNAP_THRESHOLD) {
+             snappedY = p;
+             newGuides.y = p;
+             break;
+          }
+      }
+
+      setGuides(Object.keys(newGuides).length > 0 ? newGuides : null);
+
+      const actualDeltaXPercent = snappedX - draggedItem.initX;
+      const actualDeltaYPercent = snappedY - draggedItem.initY;
+
       const newLogos = currentLogos.map(l => {
-        if (l.uid !== draggedItem.uid) return l;
-        return {
-          ...l,
-          x: Math.max(0, Math.min(100, draggedItem.initX + deltaXPercent)),
-          y: Math.max(0, Math.min(100, draggedItem.initY + deltaYPercent))
-        };
+        if (!selectedLayerIds.includes(l.uid)) return l;
+        if (l.isLocked) return l; // Do not move locked items
+        
+        if (l.uid === draggedItem.uid) {
+            return {
+              ...l,
+              x: snappedX,
+              y: snappedY
+            };
+        } else {
+            // Because l.x and l.y in currentLogos are the initial state when drag started 
+            // (since we read from layersHistory), we can just add actualDelta*Percent
+            return {
+              ...l,
+              x: Math.max(0, Math.min(100, l.x + actualDeltaXPercent)),
+              y: Math.max(0, Math.min(100, l.y + actualDeltaYPercent))
+            };
+        }
       });
       setDraftLogos(newLogos);
     };
@@ -666,6 +800,7 @@ export default function App() {
             return null;
          });
          setDraggedItem(null);
+         setGuides(null);
       }
     };
 
@@ -683,6 +818,7 @@ export default function App() {
             return null;
          });
          setDraggedItem(null);
+         setGuides(null);
       }
     };
 
@@ -1052,32 +1188,137 @@ export default function App() {
                    </div>
 
                    {/* Layer Properties */}
-                   {selectedLayerId && (
+                   {selectedLayerIds.length > 0 && (
                       <div className="bg-zinc-900/50 p-4 border border-zinc-700/50 rounded-xl relative">
                          <div className="flex items-center justify-between mb-3">
-                             <h4 className="text-xs font-bold text-indigo-400 uppercase flex items-center gap-1"><Settings2 size={12}/> Properties</h4>
-                             <button onClick={() => setSelectedLayerId(null)} className="text-zinc-500 hover:text-white"><X size={14}/></button>
+                             <h4 className="text-xs font-bold text-indigo-400 uppercase flex items-center gap-1"><Settings2 size={12}/> {selectedLayerIds.length > 1 ? 'Multiple Selected' : 'Properties'}</h4>
+                             <button onClick={() => setSelectedLayerIds([])} className="text-zinc-500 hover:text-white"><X size={14}/></button>
                          </div>
                          {(() => {
-                            const layer = placedLogos.find(l => l.uid === selectedLayerId);
+                            // If multiple selected, we show average or just the first layer's props, but applying edits affects all selected.
+                            const layer = placedLogos.find(l => l.uid === selectedLayerIds[0]);
                             if (!layer) return null;
+                            const allLocked = selectedLayerIds.every(id => placedLogos.find(l => l.uid === id)?.isLocked);
+                            const someLocked = selectedLayerIds.some(id => placedLogos.find(l => l.uid === id)?.isLocked);
+
                             return (
                                <div className="space-y-4">
+                                  {someLocked && (
+                                     <div className="text-xs text-red-400 bg-red-400/10 p-2 rounded flex items-center gap-2">
+                                        <Lock size={12} /> {selectedLayerIds.length > 1 ? 'Some layers are locked' : 'Layer is locked'}
+                                     </div>
+                                  )}
                                   <div>
                                      <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Scale</span><span>{Math.round(layer.scale * 100)}%</span></div>
-                                     <input type="range" min="0.1" max="4" step="0.05" value={layer.scale} onChange={(e) => updateSelectedLayerProperties({ scale: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer" />
+                                     <input type="range" min="0.1" max="4" step="0.05" value={layer.scale} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ scale: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
                                   </div>
                                   <div>
                                      <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Rotation</span><span>{Math.round(layer.rotation)}°</span></div>
-                                     <input type="range" min="-180" max="180" step="1" value={layer.rotation} onChange={(e) => updateSelectedLayerProperties({ rotation: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer" />
+                                     <input type="range" min="-180" max="180" step="1" value={layer.rotation} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ rotation: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
                                   </div>
                                   <div>
                                      <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Opacity</span><span>{Math.round((layer.opacity ?? 1) * 100)}%</span></div>
-                                     <input type="range" min="0" max="1" step="0.05" value={layer.opacity ?? 1} onChange={(e) => updateSelectedLayerProperties({ opacity: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer" />
+                                     <input type="range" min="0" max="1" step="0.05" value={layer.opacity ?? 1} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ opacity: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
                                   </div>
+                                  <div className="pt-2 border-t border-zinc-800">
+                                     <button 
+                                        onClick={() => updateSelectedLayerProperties({ isLocked: !allLocked })}
+                                        className="w-full py-1.5 flex items-center justify-center gap-2 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                                     >
+                                        {allLocked ? <Unlock size={14} /> : <Lock size={14} />}
+                                        {allLocked ? 'Unlock Selected' : 'Lock Selected'}
+                                     </button>
+                                  </div>
+                                  {selectedLayerIds.length > 1 && (
+                                     <div className="pt-2 border-t border-zinc-800">
+                                        <button 
+                                           onClick={() => {
+                                              // Implement grouping logic: Assign a shared groupId to all selected layers
+                                              const newGroupId = Math.random().toString(36).substr(2, 9);
+                                              updateSelectedLayerProperties({ groupId: newGroupId });
+                                           }}
+                                           className="w-full py-1.5 flex items-center justify-center gap-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 transition-colors"
+                                        >
+                                           <GripVertical size={14} /> Group Selected
+                                        </button>
+                                     </div>
+                                  )}
+                                  {selectedLayerIds.length === 1 && layer.groupId && (
+                                     <div className="pt-2 border-t border-zinc-800">
+                                        <button 
+                                           onClick={() => {
+                                              // Ungroup by removing groupId for all layers that share this groupId
+                                              const groupIds = [layer.groupId];
+                                              const newLogos = (layersHistory[historyIndex] || []).map(l => {
+                                                  if (l.groupId === layer.groupId) {
+                                                      return { ...l, groupId: undefined };
+                                                  }
+                                                  return l;
+                                              });
+                                              pushHistory(newLogos);
+                                           }}
+                                           className="w-full py-1.5 flex items-center justify-center gap-2 text-xs font-semibold rounded-lg bg-zinc-700 hover:bg-zinc-600 transition-colors"
+                                        >
+                                           <Unlock size={14} /> Ungroup
+                                        </button>
+                                     </div>
+                                  )}
                                </div>
                             )
                          })()}
+                      </div>
+                   )}
+
+                   {/* Layers List */}
+                   {placedLogos.length > 0 && (
+                      <div>
+                         <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">3. Layers</h3>
+                         <div className="space-y-1">
+                            {[...placedLogos].reverse().map((layer, indexRev) => {
+                               const actualIndex = placedLogos.length - 1 - indexRev;
+                               const lgAsset = assets.find(a => a.id === layer.assetId);
+                               const isSelected = selectedLayerIds.includes(layer.uid);
+                               return (
+                                  <div 
+                                     key={layer.uid}
+                                     draggable
+                                     onDragStart={(e) => {
+                                        setDraggedLayerIdx(actualIndex);
+                                        e.dataTransfer.effectAllowed = 'move';
+                                        // Slight delay to prevent the dragged element from snapping back immediately on some browsers
+                                     }}
+                                     onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                                     onDrop={(e) => handleDropLayer(e, actualIndex)}
+                                     onClick={(e) => {
+                                         if (e.shiftKey) {
+                                             if (isSelected) setSelectedLayerIds(prev => prev.filter(id => id !== layer.uid));
+                                             else setSelectedLayerIds(prev => [...prev, layer.uid]);
+                                         } else {
+                                             // If grouped, select the whole group
+                                             if (layer.groupId) {
+                                                 const groupLayers = placedLogos.filter(l => l.groupId === layer.groupId).map(l => l.uid);
+                                                 setSelectedLayerIds(groupLayers);
+                                             } else {
+                                                 setSelectedLayerIds([layer.uid]);
+                                             }
+                                         }
+                                     }}
+                                     className={`flex items-center justify-between p-2 rounded-lg border-2 cursor-pointer transition-all ${isSelected ? 'border-indigo-500 bg-indigo-500/10' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700'}`}
+                                  >
+                                     <div className="flex items-center gap-3">
+                                        <div className="cursor-grab text-zinc-500 hover:text-zinc-300 active:cursor-grabbing"><GripVertical size={16} /></div>
+                                        <div className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center p-1">
+                                           {lgAsset && <img src={lgAsset.data} className="max-w-full max-h-full object-contain" alt="" />}
+                                        </div>
+                                        <span className="text-sm font-medium text-zinc-300 max-w-[100px] truncate">{lgAsset?.name || 'Logo'}</span>
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                        {layer.isLocked && <Lock size={12} className="text-red-400" />}
+                                     </div>
+                                  </div>
+                               );
+                            })}
+                         </div>
                       </div>
                    )}
 
@@ -1116,7 +1357,7 @@ export default function App() {
                            </button>
                        </div>
                        
-                       {selectedLayerId && (
+                       {selectedLayerIds.length > 0 && (
                        <div className="flex rounded-lg overflow-hidden border border-zinc-700 shadow-lg pointer-events-auto bg-zinc-800">
                            <button onClick={() => alignSelected('top')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Top"><AlignStartVertical size={16} /></button>
                            <button onClick={() => alignSelected('center-y')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Middle Vertically"><AlignCenterVertical size={16} /></button>
@@ -1148,12 +1389,20 @@ export default function App() {
                             draggable={false}
                          />
 
+                         {/* Guides */}
+                         {guides?.x !== undefined && (
+                             <div className="absolute top-0 bottom-0 border-l-2 border-dashed border-pink-500 z-30 pointer-events-none" style={{ left: `${guides.x}%` }} />
+                         )}
+                         {guides?.y !== undefined && (
+                             <div className="absolute left-0 right-0 border-t-2 border-dashed border-pink-500 z-30 pointer-events-none" style={{ top: `${guides.y}%` }} />
+                         )}
+
                          {/* Overlay Layers */}
                          {placedLogos.map((layer) => {
                             const logoAsset = assets.find(a => a.id === layer.assetId);
                             if (!logoAsset) return null;
                             const isDraggingThis = draggedItem?.uid === layer.uid;
-                            const isSelected = selectedLayerId === layer.uid;
+                            const isSelected = selectedLayerIds.includes(layer.uid);
 
                             return (
                                <div
@@ -1172,30 +1421,39 @@ export default function App() {
                                   onWheel={(e) => handleWheel(e, layer.uid)}
                                >
                                   {/* Selection Border */}
-                                  <div className={`absolute -inset-2 border-2 rounded-lg transition-all pointer-events-none ${isSelected ? 'border-indigo-500 bg-indigo-500/10' : 'border-indigo-500/0 group-hover:border-indigo-500/30'}`}>
-                                     {isSelected && (
+                                  <div className={`absolute -inset-2 border-2 rounded-lg transition-all pointer-events-none ${isSelected ? (layer.isLocked ? 'border-red-500/50 bg-red-500/5' : 'border-indigo-500 bg-indigo-500/10') : 'border-indigo-500/0 group-hover:border-indigo-500/30'}`}>
+                                     {isSelected && !layer.isLocked && (
                                          <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
                                      )}
-                                     {isSelected && (
+                                     {isSelected && !layer.isLocked && (
                                          <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
                                      )}
-                                     {isSelected && (
+                                     {isSelected && !layer.isLocked && (
                                          <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
                                      )}
-                                     {isSelected && (
+                                     {isSelected && !layer.isLocked && (
                                          <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
                                      )}
                                   </div>
                                   
-                                  {/* Remove Button */}
-                                  <button 
-                                    onClick={(e) => removeLogoFromCanvas(layer.uid, e)}
-                                    onTouchEnd={(e) => removeLogoFromCanvas(layer.uid, e)}
-                                    className={`absolute -top-6 -right-6 bg-red-500 text-white rounded-full p-1.5 transition-opacity hover:scale-110 shadow-lg z-50 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                                    title="Remove"
-                                  >
-                                    <X size={14} />
-                                  </button>
+                                  {/* Remove Button (Hide if locked) */}
+                                  {!layer.isLocked && (
+                                    <button 
+                                      onClick={(e) => removeLogoFromCanvas(layer.uid, e)}
+                                      onTouchEnd={(e) => removeLogoFromCanvas(layer.uid, e)}
+                                      className={`absolute -top-6 -right-6 bg-red-500 text-white rounded-full p-1.5 transition-opacity hover:scale-110 shadow-lg z-50 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                      title="Remove"
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  )}
+
+                                  {/* Locked Icon Indicator */}
+                                  {layer.isLocked && (
+                                     <div className="absolute -top-6 -right-6 bg-red-500 text-white rounded-full p-1.5 shadow-lg z-50">
+                                         <Lock size={14} />
+                                     </div>
+                                  )}
 
                                   <img 
                                      src={logoAsset.data} 
