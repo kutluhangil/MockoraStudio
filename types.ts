@@ -19,6 +19,7 @@ export interface PlacedLayer {
   scale: number; // 1 = 100%
   rotation: number;
   opacity?: number;
+  blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity';
   isLocked?: boolean;
   groupId?: string;
 }

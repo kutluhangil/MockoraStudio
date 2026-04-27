@@ -508,10 +508,65 @@ export default function App() {
     pushHistory(newLogos);
   };
 
+  const applyGroupTransform = (newTransform: { scale: number, rotation: number, opacity: number }) => {
+     if (selectedLayerIds.length === 0) return;
+     const currentLogos = layersHistory[historyIndex] || [];
+     const selectedLogos = currentLogos.filter(l => selectedLayerIds.includes(l.uid));
+     
+     const scaleRatio = newTransform.scale / groupTransform.scale;
+     const rotationDelta = newTransform.rotation - groupTransform.rotation;
+     const opacityDelta = newTransform.opacity - groupTransform.opacity;
+     
+     setGroupTransform(newTransform);
+
+     let minX = 100, maxX = 0, minY = 100, maxY = 0;
+     selectedLogos.forEach(l => {
+        if (l.x < minX) minX = l.x;
+        if (l.x > maxX) maxX = l.x;
+        if (l.y < minY) minY = l.y;
+        if (l.y > maxY) maxY = l.y;
+     });
+     const pivotX = (minX + maxX) / 2;
+     const pivotY = (minY + maxY) / 2;
+
+     const newLogos = currentLogos.map(l => {
+        if (!selectedLayerIds.includes(l.uid) || l.isLocked) return l;
+        let newX = l.x;
+        let newY = l.y;
+        let newScale = Math.max(0.01, l.scale * scaleRatio);
+        let newRot = l.rotation + rotationDelta;
+        let newOp = Math.max(0, Math.min(1, (l.opacity ?? 1) + opacityDelta));
+
+        if (scaleRatio !== 1) {
+            newX = pivotX + (newX - pivotX) * scaleRatio;
+            newY = pivotY + (newY - pivotY) * scaleRatio;
+        }
+
+        if (rotationDelta !== 0) {
+            const angle = rotationDelta * Math.PI / 180;
+            const cx = newX - pivotX;
+            const cy = newY - pivotY;
+            newX = pivotX + (cx * Math.cos(angle) - cy * Math.sin(angle));
+            newY = pivotY + (cx * Math.sin(angle) + cy * Math.cos(angle));
+        }
+        
+        return { ...l, x: newX, y: newY, scale: newScale, rotation: newRot, opacity: newOp };
+     });
+     
+     setDraftLogos(newLogos);
+  };
+
+  const commitGroupTransform = () => {
+    setDraftLogos(prev => {
+        if (prev) pushHistory(prev);
+        return null; // Will trigger re-render with new history
+    });
+  };
+
   const alignSelected = (alignType: 'left' | 'right' | 'top' | 'bottom' | 'center-x' | 'center-y') => {
     if (selectedLayerIds.length === 0) return;
     const newLogos = (layersHistory[historyIndex] || []).map(l => {
-        if (!selectedLayerIds.includes(l.uid)) return l;
+        if (!selectedLayerIds.includes(l.uid) || l.isLocked) return l;
         let newX = l.x;
         let newY = l.y;
         if (alignType === 'left') newX = 10;
@@ -559,6 +614,13 @@ export default function App() {
   const [draggedItem, setDraggedItem] = useState<{ uid: string, startX: number, startY: number, initX: number, initY: number } | null>(null);
   const [guides, setGuides] = useState<{ x?: number, y?: number } | null>(null);
   const [draggedLayerIdx, setDraggedLayerIdx] = useState<number | null>(null);
+  const [groupTransform, setGroupTransform] = useState({ scale: 1, rotation: 0, opacity: 1 });
+
+  // Reset group transform when selection changes
+  useEffect(() => {
+     setGroupTransform({ scale: 1, rotation: 0, opacity: 1 });
+  }, [selectedLayerIds]);
+
 
   // Demo assets on load
   useEffect(() => {
@@ -653,15 +715,19 @@ export default function App() {
   const handleStart = (e: React.MouseEvent | React.TouchEvent, clientX: number, clientY: number, layer: PlacedLayer) => {
     let newSelectedIds = [...selectedLayerIds];
 
+    const layerGroupIds = layer.groupId 
+        ? (draftLogos !== null ? draftLogos : (layersHistory[historyIndex] || [])).filter(l => l.groupId === layer.groupId).map(l => l.uid)
+        : [layer.uid];
+
     if ('shiftKey' in e && e.shiftKey) {
         if (newSelectedIds.includes(layer.uid)) {
-            newSelectedIds = newSelectedIds.filter(id => id !== layer.uid);
+            newSelectedIds = newSelectedIds.filter(id => !layerGroupIds.includes(id));
         } else {
-            newSelectedIds.push(layer.uid);
+            newSelectedIds.push(...layerGroupIds);
         }
     } else {
         if (!newSelectedIds.includes(layer.uid)) {
-            newSelectedIds = [layer.uid];
+            newSelectedIds = layerGroupIds;
         }
     }
     
@@ -1208,17 +1274,82 @@ export default function App() {
                                         <Lock size={12} /> {selectedLayerIds.length > 1 ? 'Some layers are locked' : 'Layer is locked'}
                                      </div>
                                   )}
-                                  <div>
-                                     <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Scale</span><span>{Math.round(layer.scale * 100)}%</span></div>
-                                     <input type="range" min="0.1" max="4" step="0.05" value={layer.scale} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ scale: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
-                                  </div>
-                                  <div>
-                                     <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Rotation</span><span>{Math.round(layer.rotation)}°</span></div>
-                                     <input type="range" min="-180" max="180" step="1" value={layer.rotation} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ rotation: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
-                                  </div>
-                                  <div>
-                                     <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Opacity</span><span>{Math.round((layer.opacity ?? 1) * 100)}%</span></div>
-                                     <input type="range" min="0" max="1" step="0.05" value={layer.opacity ?? 1} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ opacity: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                  {selectedLayerIds.length > 1 ? (
+                                     <>
+                                        <div>
+                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Scale (Rel)</span><span>{Math.round(groupTransform.scale * 100)}%</span></div>
+                                           <input type="range" min="0.1" max="3" step="0.05" value={groupTransform.scale} disabled={allLocked} onChange={(e) => applyGroupTransform({ ...groupTransform, scale: parseFloat(e.target.value) })} onMouseUp={commitGroupTransform} onTouchEnd={commitGroupTransform} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                        </div>
+                                        <div>
+                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Rotation (Rel)</span><span>{Math.round(groupTransform.rotation)}°</span></div>
+                                           <input type="range" min="-180" max="180" step="1" value={groupTransform.rotation} disabled={allLocked} onChange={(e) => applyGroupTransform({ ...groupTransform, rotation: parseFloat(e.target.value) })} onMouseUp={commitGroupTransform} onTouchEnd={commitGroupTransform} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                        </div>
+                                        <div>
+                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Opacity (Rel)</span><span>{Math.round(groupTransform.opacity * 100)}%</span></div>
+                                           <input type="range" min="-1" max="1" step="0.05" value={groupTransform.opacity} disabled={allLocked} onChange={(e) => applyGroupTransform({ ...groupTransform, opacity: parseFloat(e.target.value) })} onMouseUp={commitGroupTransform} onTouchEnd={commitGroupTransform} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                        </div>
+                                     </>
+                                  ) : (
+                                     <>
+                                        <div>
+                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Scale</span><span>{Math.round(layer.scale * 100)}%</span></div>
+                                           <input type="range" min="0.1" max="4" step="0.05" value={layer.scale} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ scale: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                        </div>
+                                        <div>
+                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Rotation</span><span>{Math.round(layer.rotation)}°</span></div>
+                                           <input type="range" min="-180" max="180" step="1" value={layer.rotation} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ rotation: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                        </div>
+                                        <div>
+                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Opacity</span><span>{Math.round((layer.opacity ?? 1) * 100)}%</span></div>
+                                           <input type="range" min="0" max="1" step="0.05" value={layer.opacity ?? 1} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ opacity: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                        </div>
+                                        <div>
+                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Blend Mode</span></div>
+                                           <select 
+                                              value={layer.blendMode || 'normal'}
+                                              disabled={allLocked}
+                                              onChange={(e) => updateSelectedLayerProperties({ blendMode: e.target.value as any })}
+                                              className="w-full bg-zinc-800 text-sm text-zinc-300 border border-zinc-700 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                                           >
+                                              <option value="normal">Normal</option>
+                                              <option value="multiply">Multiply</option>
+                                              <option value="screen">Screen</option>
+                                              <option value="overlay">Overlay</option>
+                                              <option value="darken">Darken</option>
+                                              <option value="lighten">Lighten</option>
+                                              <option value="color-dodge">Color Dodge</option>
+                                              <option value="color-burn">Color Burn</option>
+                                              <option value="hard-light">Hard Light</option>
+                                              <option value="soft-light">Soft Light</option>
+                                              <option value="difference">Difference</option>
+                                              <option value="exclusion">Exclusion</option>
+                                              <option value="hue">Hue</option>
+                                              <option value="saturation">Saturation</option>
+                                              <option value="color">Color</option>
+                                              <option value="luminosity">Luminosity</option>
+                                           </select>
+                                        </div>
+                                     </>
+                                  )}
+                                  <div className="pt-2 border-t border-zinc-800 flex gap-2">
+                                     <button 
+                                        onClick={(e) => {
+                                            const keyboardEvent = new KeyboardEvent('keydown', { key: 'd', ctrlKey: true });
+                                            window.dispatchEvent(keyboardEvent);
+                                        }}
+                                        className="flex-1 py-1.5 flex items-center justify-center gap-2 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                                     >
+                                        <Repeat size={14} /> Duplicate
+                                     </button>
+                                     <button 
+                                        onClick={(e) => {
+                                            const keyboardEvent = new KeyboardEvent('keydown', { key: 'Delete' });
+                                            window.dispatchEvent(keyboardEvent);
+                                        }}
+                                        className="flex-1 py-1.5 flex items-center justify-center gap-2 text-xs font-semibold rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
+                                     >
+                                        <Trash2 size={14} /> Delete
+                                     </button>
                                   </div>
                                   <div className="pt-2 border-t border-zinc-800">
                                      <button 
@@ -1349,11 +1480,15 @@ export default function App() {
                    {/* Canvas Toolbar */}
                    <div className="absolute top-4 left-4 right-4 z-40 flex justify-between items-start pointer-events-none">
                        <div className="flex gap-2 pointer-events-auto">
-                           <button onClick={handleUndo} disabled={historyIndex === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 transition-colors shadow-lg ${historyIndex === 0 ? 'opacity-50 cursor-not-allowed' : 'text-white'}`}>
+                           <button onClick={handleUndo} disabled={historyIndex === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 transition-colors shadow-lg ${historyIndex === 0 ? 'opacity-50 cursor-not-allowed' : 'text-white'}`} title="Undo">
                                <Undo size={16} />
                            </button>
-                           <button onClick={handleRedo} disabled={historyIndex === layersHistory.length - 1} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 transition-colors shadow-lg ${historyIndex === layersHistory.length - 1 ? 'opacity-50 cursor-not-allowed' : 'text-white'}`}>
+                           <button onClick={handleRedo} disabled={historyIndex === layersHistory.length - 1} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 transition-colors shadow-lg ${historyIndex === layersHistory.length - 1 ? 'opacity-50 cursor-not-allowed' : 'text-white'}`} title="Redo">
                                <Redo size={16} />
+                           </button>
+                           <div className="w-px bg-zinc-700 mx-1"></div>
+                           <button onClick={() => { if(confirm('Clear all layers?')) { pushHistory([]); setSelectedLayerIds([]); } }} disabled={placedLogos.length === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-red-500/20 text-red-500 transition-colors shadow-lg ${placedLogos.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`} title="Clear Canvas">
+                               <Trash2 size={16} />
                            </button>
                        </div>
                        
@@ -1414,7 +1549,8 @@ export default function App() {
                                      transform: `translate(-50%, -50%) scale(${layer.scale}) rotate(${layer.rotation}deg)`,
                                      width: '15%',
                                      aspectRatio: '1/1',
-                                     opacity: layer.opacity ?? 1
+                                     opacity: layer.opacity ?? 1,
+                                     mixBlendMode: (layer.blendMode as any) || 'normal'
                                   }}
                                   onMouseDown={(e) => handleMouseDown(e, layer)}
                                   onTouchStart={(e) => handleTouchStart(e, layer)}
