@@ -3,15 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2, Lock, Unlock, GripVertical, Type, Save, FileDown, Pipette, Upload, Group, Copy } from 'lucide-react';
+import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2, Lock, Unlock, GripVertical, Type, Save, FileDown, Pipette, Upload, Group, Copy, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from './components/Button';
 import { FileUploader } from './components/FileUploader';
 import { generateMockup, generateAsset, generateRealtimeComposite } from './services/geminiService';
 import { Asset, GeneratedMockup, AppView, LoadingState, PlacedLayer, Template, CustomFont } from './types';
-import { useApiKey } from './hooks/useApiKey';
-import ApiKeyDialog from './components/ApiKeyDialog';
 import { toPng } from 'html-to-image';
+import { get, set } from 'idb-keyval';
 
 // --- Intro Animation Component ---
 
@@ -488,6 +487,124 @@ export default function App() {
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   
   const placedLogos = draftLogos !== null ? draftLogos : (layersHistory[historyIndex] || []);
+  
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Load state from DB
+  useEffect(() => {
+    const loadState = async () => {
+      try {
+        const storedAssets = await get('mockora_assets');
+        const storedMockups = await get('mockora_mockups');
+        const storedHistory = await get('mockora_history');
+        const storedIndex = await get('mockora_index');
+        const storedFonts = await get('mockora_fonts');
+
+        if (storedAssets) setAssets(storedAssets);
+        if (storedMockups) setGeneratedMockups(storedMockups);
+        if (storedHistory) setLayersHistory(storedHistory);
+        if (storedIndex !== undefined) setHistoryIndex(storedIndex);
+        if (storedFonts) setCustomFonts(storedFonts);
+      } catch (e) {
+        console.error('Failed to load state from indexedDB', e);
+      } finally {
+        setIsInitialized(true);
+      }
+    };
+    loadState();
+  }, []);
+
+  // Save state to DB
+  useEffect(() => {
+    if (!isInitialized) return;
+    set('mockora_assets', assets).catch(console.error);
+  }, [assets, isInitialized]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    set('mockora_mockups', generatedMockups).catch(console.error);
+  }, [generatedMockups, isInitialized]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    set('mockora_history', layersHistory).catch(console.error);
+    set('mockora_index', historyIndex).catch(console.error);
+  }, [layersHistory, historyIndex, isInitialized]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    set('mockora_fonts', customFonts).catch(console.error);
+  }, [customFonts, isInitialized]);
+
+  // Export Project JSON
+  const handleExportProject = async () => {
+    setLoading({ isGenerating: true, message: 'Exporting Project...' });
+    try {
+      const projectData = {
+        assets,
+        generatedMockups,
+        layersHistory,
+        historyIndex,
+        customFonts,
+        version: "1.0.0"
+      };
+      const blob = new Blob([JSON.stringify(projectData)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Mockora-Project-${Date.now()}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to export project');
+    } finally {
+      setLoading({ isGenerating: false, message: '' });
+    }
+  };
+
+  // Import Project JSON
+  const handleImportProject = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
+    input.onchange = async (e: any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        setLoading({ isGenerating: true, message: 'Importing Project...' });
+        const text = await file.text();
+        const data = JSON.parse(text);
+        if (data && data.assets && data.layersHistory) {
+          setAssets(data.assets || []);
+          setGeneratedMockups(data.generatedMockups || []);
+          setLayersHistory(data.layersHistory || [[]]);
+          setHistoryIndex(data.historyIndex || 0);
+          setCustomFonts(data.customFonts || []);
+          setSelectedLayerIds([]);
+        } else {
+           alert('Invalid project file format');
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Failed to import project');
+      } finally {
+        setLoading({ isGenerating: false, message: '' });
+      }
+    };
+    input.click();
+  };
+
+  // Prevent accidental data loss
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (placedLogos.length > 0 || assets.length > 0) {
+          e.returnValue = 'You have unsaved changes that will be lost.';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [placedLogos.length, assets.length]);
 
   const pushHistory = (newLogos: PlacedLayer[]) => {
     const nextHistory = layersHistory.slice(0, historyIndex + 1);
@@ -590,8 +707,48 @@ export default function App() {
     pushHistory(newLogos);
   };
 
-  // API Key Management
-  const { showApiKeyDialog, setShowApiKeyDialog, validateApiKey, handleApiKeyDialogContinue } = useApiKey();
+  const changeLayerOrder = (direction: 'front' | 'back' | 'forward' | 'backward') => {
+    if (selectedLayerIds.length === 0) return;
+    const currentLogos = [...(layersHistory[historyIndex] || [])];
+    
+    let indices = currentLogos
+      .map((l, i) => selectedLayerIds.includes(l.uid) ? i : -1)
+      .filter(i => i !== -1);
+      
+    if (indices.length === 0) return;
+
+    if (direction === 'front') {
+        const toMove = indices.map(i => currentLogos[i]);
+        for (let i = indices.length - 1; i >= 0; i--) currentLogos.splice(indices[i], 1);
+        currentLogos.push(...toMove);
+    } else if (direction === 'back') {
+        const toMove = indices.map(i => currentLogos[i]);
+        for (let i = indices.length - 1; i >= 0; i--) currentLogos.splice(indices[i], 1);
+        currentLogos.unshift(...toMove);
+    } else if (direction === 'forward') {
+        indices.sort((a,b)=> b-a);
+        for (let idx of indices) {
+            if (idx < currentLogos.length - 1 && !selectedLayerIds.includes(currentLogos[idx+1].uid)) {
+                [currentLogos[idx], currentLogos[idx+1]] = [currentLogos[idx+1], currentLogos[idx]];
+            }
+        }
+    } else if (direction === 'backward') {
+         indices.sort((a,b)=> a-b);
+         for (let idx of indices) {
+            if (idx > 0 && !selectedLayerIds.includes(currentLogos[idx-1].uid)) {
+                [currentLogos[idx], currentLogos[idx-1]] = [currentLogos[idx-1], currentLogos[idx]];
+            }
+        }
+    }
+    
+    pushHistory(currentLogos);
+  };
+
+  // Make api key validation pass automatically since it's hardcoded on the backend
+  const validateApiKey = async () => true;
+  const showApiKeyDialog = false;
+  const setShowApiKeyDialog = () => {};
+  const handleApiKeyDialogContinue = () => {};
 
   // API Error Handling Logic
   const handleApiError = (error: any) => {
@@ -665,7 +822,17 @@ export default function App() {
            e.preventDefault();
            const layersToDup = (layersHistory[historyIndex] || []).filter(l => selectedLayerIds.includes(l.uid));
            if (layersToDup.length > 0) {
-              const newLayers = layersToDup.map(l => ({ ...l, uid: Math.random().toString(36).substr(2, 9), x: l.x + 5, y: l.y + 5 }));
+              const oldToNewGroupIds = new Map<string, string>();
+              const newLayers = layersToDup.map(l => {
+                 let newGroupId = undefined;
+                 if (l.groupId) {
+                    if (!oldToNewGroupIds.has(l.groupId)) {
+                       oldToNewGroupIds.set(l.groupId, Math.random().toString(36).substr(2, 9));
+                    }
+                    newGroupId = oldToNewGroupIds.get(l.groupId);
+                 }
+                 return { ...l, uid: Math.random().toString(36).substr(2, 9), groupId: newGroupId, x: Math.min(100, l.x + 5), y: Math.min(100, l.y + 5) };
+              });
               pushHistory([...(layersHistory[historyIndex] || []), ...newLayers]);
               setSelectedLayerIds(newLayers.map(l => l.uid));
            }
@@ -775,9 +942,11 @@ export default function App() {
      
      setDraftLogos(prev => {
         const current = prev || placedLogos;
+        const targetIds = selectedLayerIds.includes(layerId) ? selectedLayerIds : [layerId];
         return current.map(l => {
-           if (l.uid !== layerId) return l;
-           const newScale = Math.max(0.1, Math.min(4.0, l.scale + delta));
+           if (!targetIds.includes(l.uid)) return l;
+           if (l.isLocked) return l;
+           const newScale = Math.max(0.1, Math.min(4.0, (l.scale || 1) + delta));
            return { ...l, scale: newScale };
         });
      });
@@ -1591,12 +1760,23 @@ export default function App() {
                                           onClick={() => {
                                               const currentLogos = layersHistory[historyIndex] || [];
                                               const selectedLogos = currentLogos.filter(l => selectedLayerIds.includes(l.uid));
-                                              const newLogos = selectedLogos.map(l => ({
-                                                  ...l,
-                                                  uid: Math.random().toString(36).substr(2, 9),
-                                                  x: Math.min(100, l.x + 5),
-                                                  y: Math.min(100, l.y + 5),
-                                              }));
+                                              const oldToNewGroupIds = new Map<string, string>();
+                                              const newLogos = selectedLogos.map(l => {
+                                                  let newGroupId = undefined;
+                                                  if (l.groupId) {
+                                                      if (!oldToNewGroupIds.has(l.groupId)) {
+                                                          oldToNewGroupIds.set(l.groupId, Math.random().toString(36).substr(2, 9));
+                                                      }
+                                                      newGroupId = oldToNewGroupIds.get(l.groupId);
+                                                  }
+                                                  return {
+                                                      ...l,
+                                                      uid: Math.random().toString(36).substr(2, 9),
+                                                      groupId: newGroupId,
+                                                      x: Math.min(100, l.x + 5),
+                                                      y: Math.min(100, l.y + 5),
+                                                  };
+                                              });
                                               pushHistory([...currentLogos, ...newLogos]);
                                               setSelectedLayerIds(newLogos.map(l => l.uid));
                                           }}
@@ -1746,6 +1926,7 @@ export default function App() {
                        
                        <div className="flex gap-2 pointer-events-auto ml-auto">
                            {selectedLayerIds.length > 0 && (
+                           <>
                            <div className="flex rounded-lg overflow-hidden border border-zinc-700 shadow-lg bg-zinc-800 mr-2">
                                <button onClick={() => alignSelected('top')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Top"><AlignStartVertical size={16} /></button>
                                <button onClick={() => alignSelected('center-y')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Middle Vertically"><AlignCenterVertical size={16} /></button>
@@ -1754,6 +1935,13 @@ export default function App() {
                                <button onClick={() => alignSelected('center-x')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Center Horizontally"><AlignCenterHorizontal size={16} /></button>
                                <button onClick={() => alignSelected('right')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors" title="Align Right"><AlignRight size={16} /></button>
                            </div>
+                           <div className="flex rounded-lg overflow-hidden border border-zinc-700 shadow-lg bg-zinc-800 mr-2">
+                              <button onClick={() => changeLayerOrder('front')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Bring to Front"><ChevronsDown size={16} /></button>
+                              <button onClick={() => changeLayerOrder('forward')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Bring Forward"><ChevronDown size={16} /></button>
+                              <button onClick={() => changeLayerOrder('backward')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Send Backward"><ChevronUp size={16} /></button>
+                              <button onClick={() => changeLayerOrder('back')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors" title="Send to Back"><ChevronsUp size={16} /></button>
+                           </div>
+                           </>
                            )}
 
                            <button onClick={async () => {
