@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2, Lock, Unlock, GripVertical } from 'lucide-react';
+import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2, Lock, Unlock, GripVertical, Type, Save, FileDown, Pipette, Upload, Group, Copy } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from './components/Button';
 import { FileUploader } from './components/FileUploader';
 import { generateMockup, generateAsset, generateRealtimeComposite } from './services/geminiService';
-import { Asset, GeneratedMockup, AppView, LoadingState, PlacedLayer } from './types';
+import { Asset, GeneratedMockup, AppView, LoadingState, PlacedLayer, Template, CustomFont } from './types';
 import { useApiKey } from './hooks/useApiKey';
 import ApiKeyDialog from './components/ApiKeyDialog';
+import { toPng } from 'html-to-image';
 
 // --- Intro Animation Component ---
 
@@ -469,6 +470,15 @@ export default function App() {
   // Form states for generation
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
+  const [productColor, setProductColor] = useState<string>('#ffffff'); // Default white
+  const [productGradientEnabled, setProductGradientEnabled] = useState<boolean>(false);
+  const [productGradientType, setProductGradientType] = useState<'linear' | 'radial'>('linear');
+  const [productGradientColor1, setProductGradientColor1] = useState<string>('#ffffff');
+  const [productGradientColor2, setProductGradientColor2] = useState<string>('#e0e0e0');
+  const [productGradientAngle, setProductGradientAngle] = useState<number>(45);
+  const [bgPrompt, setBgPrompt] = useState<string>(''); // AI Background prompt
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [customFonts, setCustomFonts] = useState<CustomFont[]>([]);
   const [loading, setLoading] = useState<LoadingState>({ isGenerating: false, message: '' });
 
   // --- STUDIO HISTORY & STATE ---
@@ -935,7 +945,7 @@ export default function App() {
       return;
     }
 
-    const currentPrompt = prompt;
+    const currentPrompt = `${prompt}${bgPrompt ? `\n\nBackground Context: ${bgPrompt}` : ''}${productColor && productColor !== '#ffffff' ? `\n\nProduct Base Color: ${productColor} (Please tint the base product accordingly)` : ''}`;
 
     setLoading({ isGenerating: true, message: 'Analyzing composite geometry...' });
     try {
@@ -967,6 +977,18 @@ export default function App() {
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-sans flex overflow-hidden relative">
       
+      {/* Inject Custom Fonts into Page */}
+      {customFonts.length > 0 && (
+         <style>
+            {customFonts.map(f => `
+               @font-face {
+                 font-family: '${f.name}';
+                 src: url('${f.url}');
+               }
+            `).join('\n')}
+         </style>
+      )}
+
       {/* API Key Dialog */}
       {showApiKeyDialog && (
         <ApiKeyDialog onContinue={handleApiKeyDialogContinue} />
@@ -1223,6 +1245,64 @@ export default function App() {
                          ))}
                          {assets.filter(a => a.type === 'product').length === 0 && <p className="text-xs text-zinc-400 col-span-3">No products uploaded</p>}
                       </div>
+                      
+                      {/* Product Color Picker */}
+                      <div className="mt-4 flex flex-col gap-3 bg-zinc-900/50 p-3 rounded-xl border border-zinc-700/50">
+                          <div className="flex items-center justify-between">
+                              <p className="text-xs font-semibold text-zinc-300">Base Color / Gradient</p>
+                              <div className="flex items-center gap-2">
+                                 <label className="text-xs text-zinc-400 flex items-center gap-1 cursor-pointer">
+                                     <input type="checkbox" checked={productGradientEnabled} onChange={(e) => setProductGradientEnabled(e.target.checked)} className="rounded bg-zinc-800 border-zinc-700 w-3 h-3 accent-indigo-500" />
+                                     Gradient
+                                 </label>
+                              </div>
+                          </div>
+                          
+                          {!productGradientEnabled ? (
+                              <div className="flex items-center justify-between">
+                                  <span className="text-[10px] text-zinc-500">Solid Color</span>
+                                  <div className="flex items-center gap-2">
+                                      <Pipette size={14} className="text-zinc-500" />
+                                      <input 
+                                         type="color" 
+                                         value={productColor} 
+                                         onChange={(e) => setProductColor(e.target.value)} 
+                                         className="w-[24px] h-[24px] rounded cursor-pointer border-0 p-0"
+                                         title="Change Product Base Color"
+                                      />
+                                  </div>
+                              </div>
+                          ) : (
+                              <div className="space-y-2">
+                                  <div className="flex gap-2">
+                                      <select value={productGradientType} onChange={(e) => setProductGradientType(e.target.value as 'linear'|'radial')} className="flex-1 bg-zinc-800 text-xs text-zinc-300 border border-zinc-700 rounded-lg px-2 h-[28px] focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                          <option value="linear">Linear</option>
+                                          <option value="radial">Radial</option>
+                                      </select>
+                                      {productGradientType === 'linear' && (
+                                          <input type="number" min="0" max="360" value={productGradientAngle} onChange={(e) => setProductGradientAngle(Number(e.target.value))} className="w-16 bg-zinc-800 text-xs text-zinc-300 border border-zinc-700 rounded-lg px-2 h-[28px] focus:outline-none focus:ring-1 focus:ring-indigo-500" title="Angle (deg)" />
+                                      )}
+                                  </div>
+                                  <div className="flex items-center justify-between pt-1 border-t border-zinc-800/50">
+                                      <span className="text-[10px] text-zinc-500">Colors</span>
+                                      <div className="flex items-center gap-2">
+                                          <input 
+                                             type="color" 
+                                             value={productGradientColor1} 
+                                             onChange={(e) => setProductGradientColor1(e.target.value)} 
+                                             className="w-[24px] h-[24px] rounded cursor-pointer border-0 p-0"
+                                          />
+                                          <input 
+                                             type="color" 
+                                             value={productGradientColor2} 
+                                             onChange={(e) => setProductGradientColor2(e.target.value)} 
+                                             className="w-[24px] h-[24px] rounded cursor-pointer border-0 p-0"
+                                          />
+                                      </div>
+                                  </div>
+                              </div>
+                          )}
+                      </div>
                    </div>
 
                    <div>
@@ -1249,8 +1329,33 @@ export default function App() {
                                )}
                             </div>
                          ))}
-                         {assets.filter(a => a.type === 'logo').length === 0 && <p className="text-xs text-zinc-400 col-span-3">No logos uploaded</p>}
+                         <div 
+                             onClick={() => {
+                               const newLayer: PlacedLayer = {
+                                 uid: Math.random().toString(36).substr(2, 9),
+                                 type: 'text',
+                                 text: 'New Text',
+                                 fontFamily: 'Inter',
+                                 fill: '#ffffff',
+                                 textAlign: 'center',
+                                 curve: 0,
+                                 x: 50,
+                                 y: 50,
+                                 scale: 1,
+                                 rotation: 0,
+                                 opacity: 1,
+                                 blendMode: 'normal'
+                               };
+                               pushHistory([...placedLogos, newLayer]);
+                               setSelectedLayerIds([newLayer.uid]);
+                             }}
+                             className={`relative aspect-square rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer p-1 transition-all border-zinc-700 hover:border-zinc-500 bg-zinc-900 text-zinc-400 hover:text-white`}
+                          >
+                             <Type size={24} className="mb-1" />
+                             <span className="text-[10px] font-medium">Add Text</span>
+                          </div>
                       </div>
+                      {assets.filter(a => a.type === 'logo').length === 0 && <p className="text-xs text-zinc-400 mt-2">No logos uploaded</p>}
                    </div>
 
                    {/* Layer Properties */}
@@ -1329,6 +1434,93 @@ export default function App() {
                                               <option value="luminosity">Luminosity</option>
                                            </select>
                                         </div>
+                                        {layer.type === 'text' && (
+                                           <div className="pt-3 border-t border-zinc-800 space-y-4 mt-4">
+                                              <div>
+                                                 <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Text Content</span></div>
+                                                 <input type="text" value={layer.text || ''} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ text: e.target.value })} className="w-full bg-zinc-800 text-sm text-zinc-300 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50" />
+                                              </div>
+                                              
+                                              <div className="flex gap-2">
+                                                 <div className="flex-[1]">
+                                                    <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Color</span></div>
+                                                       <input type="color" value={layer.fill || '#ffffff'} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ fill: e.target.value })} className="w-full h-[28px] rounded cursor-pointer disabled:opacity-50 p-0" />
+                                                 </div>
+                                                 <div className="flex-[2] relative">
+                                                    <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Font</span></div>
+                                                    <div className="flex gap-1">
+                                                       <select value={layer.fontFamily || 'Inter'} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ fontFamily: e.target.value })} className="flex-1 w-full h-[28px] bg-zinc-800 text-sm text-zinc-300 border border-zinc-700 rounded-lg px-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50">
+                                                          <option value="Inter">Inter</option>
+                                                          <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+                                                          <option value="'Playfair Display', serif">Playfair Display</option>
+                                                          <option value="'Space Grotesk', sans-serif">Space Grotesk</option>
+                                                          {customFonts.map(cf => (
+                                                              <option key={cf.name} value={`'${cf.name}'`}>{cf.name}</option>
+                                                          ))}
+                                                       </select>
+                                                       <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg h-[28px] w-[28px] flex items-center justify-center text-zinc-400 hover:text-white transition-colors" title="Import Font (.ttf, .otf, .woff)">
+                                                           <Upload size={14} />
+                                                           <input type="file" accept=".ttf,.otf,.woff,.woff2" className="hidden" onChange={(e) => {
+                                                              const file = e.target.files?.[0];
+                                                              if (file) {
+                                                                  const url = URL.createObjectURL(file);
+                                                                  const name = file.name.split('.')[0];
+                                                                  setCustomFonts(prev => [...prev, { name, url }]);
+                                                                  updateSelectedLayerProperties({ fontFamily: `'${name}'` });
+                                                              }
+                                                              e.target.value = '';
+                                                           }} />
+                                                       </label>
+                                                    </div>
+                                                 </div>
+                                              </div>
+
+                                              {/* Stroke & Stroke Width */}
+                                              <div className="flex gap-2">
+                                                 <div className="flex-[1]">
+                                                    <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Stroke</span></div>
+                                                    <div className="flex gap-1">
+                                                       <input type="color" value={layer.strokeColor || '#000000'} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ strokeColor: e.target.value })} className="w-full h-[28px] rounded cursor-pointer disabled:opacity-50 p-0" />
+                                                    </div>
+                                                 </div>
+                                                 <div className="flex-[2]">
+                                                    <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Stroke Width ({layer.strokeWidth || 0}px)</span></div>
+                                                    <input type="range" min="0" max="20" step="1" value={layer.strokeWidth || 0} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ strokeWidth: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50 mt-2" />
+                                                 </div>
+                                              </div>
+
+                                              {/* Shadow */}
+                                              <div className="space-y-2">
+                                                 <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Shadow</span></div>
+                                                 <div className="flex gap-2 items-center">
+                                                    <input type="color" value={layer.shadowColor || '#ffffff'} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ shadowColor: e.target.value })} className="w-[28px] h-[28px] rounded cursor-pointer disabled:opacity-50 p-0 flex-shrink-0" />
+                                                    <div className="flex-1 text-[10px] text-zinc-500 flex items-center gap-1">
+                                                       B:<input type="number" min="0" max="50" step="1" value={layer.shadowBlur || 0} onChange={(e) => updateSelectedLayerProperties({ shadowBlur: parseFloat(e.target.value) || 0 })} disabled={allLocked} className="w-10 bg-zinc-800 border border-zinc-700 p-1 rounded" />
+                                                       X:<input type="number" min="-50" max="50" step="1" value={layer.shadowOffsetX || 0} onChange={(e) => updateSelectedLayerProperties({ shadowOffsetX: parseFloat(e.target.value) || 0 })} disabled={allLocked} className="w-10 bg-zinc-800 border border-zinc-700 p-1 rounded" />
+                                                       Y:<input type="number" min="-50" max="50" step="1" value={layer.shadowOffsetY || 0} onChange={(e) => updateSelectedLayerProperties({ shadowOffsetY: parseFloat(e.target.value) || 0 })} disabled={allLocked} className="w-10 bg-zinc-800 border border-zinc-700 p-1 rounded" />
+                                                    </div>
+                                                 </div>
+                                                 <div className="flex items-center gap-2 mt-1">
+                                                     <button onClick={() => updateSelectedLayerProperties({ shadowColor: undefined, shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 })} className="text-xs text-red-400 hover:text-red-300">Remove Shadow</button>
+                                                 </div>
+                                              </div>
+
+                                              {/* Background / Shape */}
+                                              <div className="space-y-2">
+                                                 <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Background</span></div>
+                                                 <div className="flex gap-2 items-center">
+                                                    <input type="color" value={layer.textBgColor || '#000000'} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ textBgColor: e.target.value })} className="w-[28px] h-[28px] rounded cursor-pointer disabled:opacity-50 p-0 flex-shrink-0" />
+                                                    <div className="flex-1 text-[10px] text-zinc-500 flex items-center gap-1">
+                                                       Pad:<input type="number" min="0" max="100" step="1" value={layer.textBgPadding || 0} onChange={(e) => updateSelectedLayerProperties({ textBgPadding: parseFloat(e.target.value) || 0 })} disabled={allLocked} className="w-10 bg-zinc-800 border border-zinc-700 p-1 rounded" />
+                                                       Rad:<input type="number" min="0" max="100" step="1" value={layer.textBgRadius || 0} onChange={(e) => updateSelectedLayerProperties({ textBgRadius: parseFloat(e.target.value) || 0 })} disabled={allLocked} className="w-10 bg-zinc-800 border border-zinc-700 p-1 rounded" />
+                                                    </div>
+                                                 </div>
+                                                 <div className="flex items-center gap-2 mt-1">
+                                                     <button onClick={() => updateSelectedLayerProperties({ textBgColor: undefined, textBgPadding: 0, textBgRadius: 0 })} className="text-xs text-red-400 hover:text-red-300">Remove Bg</button>
+                                                 </div>
+                                              </div>
+                                           </div>
+                                        )}
                                      </>
                                   )}
                                   <div className="pt-2 border-t border-zinc-800 flex gap-2">
@@ -1360,11 +1552,10 @@ export default function App() {
                                         {allLocked ? 'Unlock Selected' : 'Lock Selected'}
                                      </button>
                                   </div>
-                                  {selectedLayerIds.length > 1 && (
+                                  {selectedLayerIds.length > 1 && (!layer.groupId || !selectedLayerIds.every(id => placedLogos.find(x => x.uid === id)?.groupId === layer.groupId)) && (
                                      <div className="pt-2 border-t border-zinc-800">
                                         <button 
                                            onClick={() => {
-                                              // Implement grouping logic: Assign a shared groupId to all selected layers
                                               const newGroupId = Math.random().toString(36).substr(2, 9);
                                               updateSelectedLayerProperties({ groupId: newGroupId });
                                            }}
@@ -1374,12 +1565,13 @@ export default function App() {
                                         </button>
                                      </div>
                                   )}
-                                  {selectedLayerIds.length === 1 && layer.groupId && (
+                                  {selectedLayerIds.length > 0 && selectedLayerIds.every(id => {
+                                      const l = placedLogos.find(x => x.uid === id);
+                                      return l?.groupId === layer.groupId;
+                                  }) && layer.groupId && (
                                      <div className="pt-2 border-t border-zinc-800">
                                         <button 
                                            onClick={() => {
-                                              // Ungroup by removing groupId for all layers that share this groupId
-                                              const groupIds = [layer.groupId];
                                               const newLogos = (layersHistory[historyIndex] || []).map(l => {
                                                   if (l.groupId === layer.groupId) {
                                                       return { ...l, groupId: undefined };
@@ -1394,6 +1586,25 @@ export default function App() {
                                         </button>
                                      </div>
                                   )}
+                                  <div className="pt-2 border-t border-zinc-800">
+                                      <button 
+                                          onClick={() => {
+                                              const currentLogos = layersHistory[historyIndex] || [];
+                                              const selectedLogos = currentLogos.filter(l => selectedLayerIds.includes(l.uid));
+                                              const newLogos = selectedLogos.map(l => ({
+                                                  ...l,
+                                                  uid: Math.random().toString(36).substr(2, 9),
+                                                  x: Math.min(100, l.x + 5),
+                                                  y: Math.min(100, l.y + 5),
+                                              }));
+                                              pushHistory([...currentLogos, ...newLogos]);
+                                              setSelectedLayerIds(newLogos.map(l => l.uid));
+                                          }}
+                                          className="w-full py-1.5 flex items-center justify-center gap-2 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                                      >
+                                          <Copy size={14} /> Duplicate Selected
+                                      </button>
+                                  </div>
                                </div>
                             )
                          })()}
@@ -1407,7 +1618,7 @@ export default function App() {
                          <div className="space-y-1">
                             {[...placedLogos].reverse().map((layer, indexRev) => {
                                const actualIndex = placedLogos.length - 1 - indexRev;
-                               const lgAsset = assets.find(a => a.id === layer.assetId);
+                               const lgAsset = layer.type === 'text' ? null : assets.find(a => a.id === layer.assetId);
                                const isSelected = selectedLayerIds.includes(layer.uid);
                                return (
                                   <div 
@@ -1439,9 +1650,9 @@ export default function App() {
                                      <div className="flex items-center gap-3">
                                         <div className="cursor-grab text-zinc-500 hover:text-zinc-300 active:cursor-grabbing"><GripVertical size={16} /></div>
                                         <div className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center p-1">
-                                           {lgAsset && <img src={lgAsset.data} className="max-w-full max-h-full object-contain" alt="" />}
+                                           {layer.type === 'text' ? <Type size={16} className="text-zinc-400" /> : (lgAsset && <img src={lgAsset.data} className="max-w-full max-h-full object-contain" alt="" />)}
                                         </div>
-                                        <span className="text-sm font-medium text-zinc-300 max-w-[100px] truncate">{lgAsset?.name || 'Logo'}</span>
+                                        <span className="text-sm font-medium text-zinc-300 max-w-[100px] truncate">{layer.type === 'text' ? `Text: ${layer.text}` : lgAsset?.name || 'Logo'}</span>
                                      </div>
                                      <div className="flex items-center gap-2">
                                         {layer.isLocked && <Lock size={12} className="text-red-400" />}
@@ -1453,14 +1664,41 @@ export default function App() {
                       </div>
                    )}
 
+                   {templates.length > 0 && (
+                      <div>
+                         <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Saved Templates</h3>
+                         <div className="grid grid-cols-2 gap-2">
+                            {templates.map(t => (
+                               <div key={t.id} onClick={() => {
+                                  pushHistory(t.layers);
+                                  if (t.productId) setSelectedProductId(t.productId);
+                                  setSelectedLayerIds([]);
+                               }} className="rounded-lg border-2 cursor-pointer p-2 transition-all border-zinc-700 hover:border-indigo-500 bg-zinc-900 group flex items-center justify-between text-zinc-300 hover:text-white">
+                                 <span className="truncate text-sm">{t.name}</span> 
+                                 <FileDown size={14} className="text-zinc-500 group-hover:text-indigo-400 opacity-50 group-hover:opacity-100 flex-shrink-0"/>
+                               </div>
+                            ))}
+                         </div>
+                      </div>
+                   )}
+
                    <div>
-                      <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">4. Instructions</h3>
-                      <textarea 
-                         className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-base text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none h-24"
-                         placeholder="E.g. Embed the logos into the fabric texture..."
-                         value={prompt}
-                         onChange={(e) => setPrompt(e.target.value)}
-                      />
+                      <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">4. Instructions & Environment</h3>
+                      <div className="space-y-3">
+                         <textarea 
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none h-20"
+                            placeholder="AI Instructions e.g. Embed the logos naturally into the fabric texture."
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
+                         />
+                         <input 
+                            type="text"
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                            placeholder="Background e.g. on a wooden table, worn by model outside..."
+                            value={bgPrompt}
+                            onChange={(e) => setBgPrompt(e.target.value)}
+                         />
+                      </div>
                    </div>
 
                    <Button 
@@ -1490,18 +1728,61 @@ export default function App() {
                            <button onClick={() => { if(confirm('Clear all layers?')) { pushHistory([]); setSelectedLayerIds([]); } }} disabled={placedLogos.length === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-red-500/20 text-red-500 transition-colors shadow-lg ${placedLogos.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`} title="Clear Canvas">
                                <Trash2 size={16} />
                            </button>
+                           <div className="w-px bg-zinc-700 mx-1"></div>
+                           <button onClick={() => { 
+                               const name = prompt('Enter a name for this template:');
+                               if(name) {
+                                   setTemplates(prev => [...prev, {
+                                       id: Math.random().toString(36).substr(2, 9),
+                                       name,
+                                       layers: placedLogos,
+                                       productId: selectedProductId || undefined
+                                   }]);
+                               }
+                           }} disabled={placedLogos.length === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-indigo-500/20 text-indigo-400 transition-colors shadow-lg flex items-center gap-2 text-sm font-semibold ${placedLogos.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`} title="Save as Template">
+                               <Save size={16} /> <span className="hidden sm:inline">Save</span>
+                           </button>
                        </div>
                        
-                       {selectedLayerIds.length > 0 && (
-                       <div className="flex rounded-lg overflow-hidden border border-zinc-700 shadow-lg pointer-events-auto bg-zinc-800">
-                           <button onClick={() => alignSelected('top')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Top"><AlignStartVertical size={16} /></button>
-                           <button onClick={() => alignSelected('center-y')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Middle Vertically"><AlignCenterVertical size={16} /></button>
-                           <button onClick={() => alignSelected('bottom')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Bottom"><AlignEndVertical size={16} /></button>
-                           <button onClick={() => alignSelected('left')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Left"><AlignLeft size={16} /></button>
-                           <button onClick={() => alignSelected('center-x')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Center Horizontally"><AlignCenterHorizontal size={16} /></button>
-                           <button onClick={() => alignSelected('right')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors" title="Align Right"><AlignRight size={16} /></button>
+                       <div className="flex gap-2 pointer-events-auto ml-auto">
+                           {selectedLayerIds.length > 0 && (
+                           <div className="flex rounded-lg overflow-hidden border border-zinc-700 shadow-lg bg-zinc-800 mr-2">
+                               <button onClick={() => alignSelected('top')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Top"><AlignStartVertical size={16} /></button>
+                               <button onClick={() => alignSelected('center-y')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Middle Vertically"><AlignCenterVertical size={16} /></button>
+                               <button onClick={() => alignSelected('bottom')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Bottom"><AlignEndVertical size={16} /></button>
+                               <button onClick={() => alignSelected('left')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Left"><AlignLeft size={16} /></button>
+                               <button onClick={() => alignSelected('center-x')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white border-r border-zinc-700 transition-colors" title="Align Center Horizontally"><AlignCenterHorizontal size={16} /></button>
+                               <button onClick={() => alignSelected('right')} className="p-2 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors" title="Align Right"><AlignRight size={16} /></button>
+                           </div>
+                           )}
+
+                           <button onClick={async () => {
+                               const printArea = document.getElementById('print-area');
+                               if (!printArea) return;
+                               try {
+                                   setLoading({ isGenerating: true, message: 'Exporting transparent PNG...' });
+                                   // briefly hide export-hide elements using a class
+                                   const hides = printArea.querySelectorAll('.export-hide');
+                                   hides.forEach(el => (el as HTMLElement).style.display = 'none');
+                                   
+                                   const dataUrl = await toPng(printArea, { cacheBust: true, pixelRatio: 2 });
+                                   
+                                   hides.forEach(el => (el as HTMLElement).style.display = '');
+                                   
+                                   const link = document.createElement('a');
+                                   link.download = `print-export-${Date.now()}.png`;
+                                   link.href = dataUrl;
+                                   link.click();
+                               } catch (err) {
+                                   console.error('Export failed', err);
+                                   alert('Export failed. Check console.');
+                               } finally {
+                                   setLoading({ isGenerating: false, message: '' });
+                               }
+                           }} disabled={placedLogos.length === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-indigo-500/20 text-indigo-400 transition-colors shadow-lg flex items-center gap-2 text-sm font-semibold ${placedLogos.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`} title="Export Print File (Transparent PNG)">
+                               <Download size={16} /> <span className="hidden sm:inline">Export PNG</span>
+                           </button>
                        </div>
-                       )}
                    </div>
 
                    {loading.isGenerating && (
@@ -1516,13 +1797,23 @@ export default function App() {
                          ref={canvasRef}
                          className="relative w-full h-full max-h-[600px] p-4"
                       >
-                         {/* Product Base */}
-                         <img 
-                            src={assets.find(a => a.id === selectedProductId)?.data} 
-                            className="w-full h-full object-contain drop-shadow-2xl pointer-events-none select-none" 
-                            alt="Preview" 
-                            draggable={false}
-                         />
+                         {/* Product Base and design container combined for export if needed, 
+                             but we will export only the overlay part. Wait, they need the design area. 
+                             Usually a print export is just the logos but bounded safely. 
+                             We'll wrap the overlays in their own ref. */}
+                         <div className="absolute inset-4 rounded-xl overflow-hidden" style={{ 
+                             background: productGradientEnabled 
+                                 ? (productGradientType === 'linear' ? `linear-gradient(${productGradientAngle}deg, ${productGradientColor1}, ${productGradientColor2})` : `radial-gradient(circle, ${productGradientColor1}, ${productGradientColor2})`) 
+                                 : (productColor === '#ffffff' ? 'transparent' : productColor) 
+                         }}>
+                            <img 
+                               src={assets.find(a => a.id === selectedProductId)?.data} 
+                               className="w-full h-full object-contain pointer-events-none select-none"
+                               style={{ mixBlendMode: (productColor === '#ffffff' && !productGradientEnabled) ? 'normal' : 'multiply' }}
+                               alt="Preview Base" 
+                               draggable={false}
+                            />
+                         </div>
 
                          {/* Guides */}
                          {guides?.x !== undefined && (
@@ -1533,73 +1824,96 @@ export default function App() {
                          )}
 
                          {/* Overlay Layers */}
-                         {placedLogos.map((layer) => {
-                            const logoAsset = assets.find(a => a.id === layer.assetId);
-                            if (!logoAsset) return null;
-                            const isDraggingThis = draggedItem?.uid === layer.uid;
-                            const isSelected = selectedLayerIds.includes(layer.uid);
+                         <div className="absolute inset-4 pointer-events-none" id="print-area">
+                            {placedLogos.map((layer) => {
+                               const logoAsset = layer.type === 'text' ? null : assets.find(a => a.id === layer.assetId);
+                               if (!logoAsset && layer.type !== 'text') return null;
+                               
+                               const isDraggingThis = draggedItem?.uid === layer.uid;
+                               const isSelected = selectedLayerIds.includes(layer.uid);
 
-                            return (
-                               <div
-                                  key={layer.uid}
-                                  className={`absolute cursor-move group ${isDraggingThis ? 'z-50 opacity-60 drop-shadow-2xl scale-105' : 'z-10 transition-transform'} ${isSelected ? 'z-20' : ''}`}
-                                  style={{
-                                     left: `${layer.x}%`,
-                                     top: `${layer.y}%`,
-                                     transform: `translate(-50%, -50%) scale(${layer.scale}) rotate(${layer.rotation}deg)`,
-                                     width: '15%',
-                                     aspectRatio: '1/1',
-                                     opacity: layer.opacity ?? 1,
-                                     mixBlendMode: (layer.blendMode as any) || 'normal'
-                                  }}
-                                  onMouseDown={(e) => handleMouseDown(e, layer)}
-                                  onTouchStart={(e) => handleTouchStart(e, layer)}
-                                  onWheel={(e) => handleWheel(e, layer.uid)}
-                               >
-                                  {/* Selection Border */}
-                                  <div className={`absolute -inset-2 border-2 rounded-lg transition-all pointer-events-none ${isSelected ? (layer.isLocked ? 'border-red-500/50 bg-red-500/5' : 'border-indigo-500 bg-indigo-500/10') : 'border-indigo-500/0 group-hover:border-indigo-500/30'}`}>
-                                     {isSelected && !layer.isLocked && (
-                                         <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
+                               return (
+                                  <div
+                                     key={layer.uid}
+                                     className={`absolute cursor-move group pointer-events-auto ${isDraggingThis ? 'z-50 opacity-60 drop-shadow-2xl scale-105' : 'z-10 transition-transform'} ${isSelected ? 'z-20' : ''}`}
+                                     style={{
+                                        left: `${layer.x}%`,
+                                        top: `${layer.y}%`,
+                                        transform: `translate(-50%, -50%) scale(${layer.scale}) rotate(${layer.rotation}deg)`,
+                                        width: layer.type === 'text' ? 'auto' : '15%',
+                                        aspectRatio: layer.type === 'text' ? 'auto' : '1/1',
+                                        opacity: layer.opacity ?? 1,
+                                        mixBlendMode: (layer.blendMode as any) || 'normal'
+                                     }}
+                                     onMouseDown={(e) => handleMouseDown(e, layer)}
+                                     onTouchStart={(e) => handleTouchStart(e, layer)}
+                                     onWheel={(e) => handleWheel(e, layer.uid)}
+                                  >
+                                     {/* Selection Border */}
+                                     <div className={`absolute -inset-2 border-2 rounded-lg transition-all pointer-events-none export-hide ${isSelected ? (layer.isLocked ? 'border-red-500/50 bg-red-500/5' : 'border-indigo-500 bg-indigo-500/10') : 'border-indigo-500/0 group-hover:border-indigo-500/30'}`}>
+                                        {isSelected && !layer.isLocked && (
+                                            <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
+                                        )}
+                                        {isSelected && !layer.isLocked && (
+                                            <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
+                                        )}
+                                        {isSelected && !layer.isLocked && (
+                                            <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
+                                        )}
+                                        {isSelected && !layer.isLocked && (
+                                            <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
+                                        )}
+                                     </div>
+                                     
+                                     {/* Remove Button (Hide if locked) */}
+                                     {!layer.isLocked && (
+                                       <button 
+                                         onClick={(e) => removeLogoFromCanvas(layer.uid, e)}
+                                         onTouchEnd={(e) => removeLogoFromCanvas(layer.uid, e)}
+                                         className={`absolute -top-6 -right-6 bg-red-500 text-white rounded-full p-1.5 transition-opacity hover:scale-110 shadow-lg z-50 export-hide ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                         title="Remove"
+                                       >
+                                         <X size={14} />
+                                       </button>
                                      )}
-                                     {isSelected && !layer.isLocked && (
-                                         <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
+
+                                     {/* Locked Icon Indicator */}
+                                     {layer.isLocked && (
+                                        <div className="absolute -top-6 -right-6 bg-red-500 text-white rounded-full p-1.5 shadow-lg z-50 export-hide">
+                                            <Lock size={14} />
+                                        </div>
                                      )}
-                                     {isSelected && !layer.isLocked && (
-                                         <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
-                                     )}
-                                     {isSelected && !layer.isLocked && (
-                                         <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
+
+                                     {layer.type === 'text' ? (
+                                        <div 
+                                           className="whitespace-nowrap select-none"
+                                           style={{ 
+                                              fontFamily: layer.fontFamily, 
+                                              color: layer.fill, 
+                                              fontSize: 'clamp(1rem, 5vw, 4rem)',
+                                              textAlign: layer.textAlign || 'center',
+                                              transform: layer.curve ? `skewX(${layer.curve / 10}deg)` /* Fallback curve styling */ : 'none',
+                                              WebkitTextStroke: layer.strokeWidth ? `${layer.strokeWidth}px ${layer.strokeColor || '#000000'}` : undefined,
+                                              backgroundColor: layer.textBgColor,
+                                              padding: layer.textBgPadding !== undefined ? `${layer.textBgPadding}px` : (layer.textBgColor ? '8px 16px' : '0px'),
+                                              borderRadius: layer.textBgRadius !== undefined ? `${layer.textBgRadius}px` : '0px',
+                                              textShadow: layer.shadowColor ? `${layer.shadowOffsetX || 0}px ${layer.shadowOffsetY || 0}px ${layer.shadowBlur || 0}px ${layer.shadowColor}` : undefined
+                                           }}
+                                        >
+                                           {layer.text || 'Add Text'}
+                                        </div>
+                                     ) : (
+                                        <img 
+                                           src={logoAsset?.data} 
+                                           className="w-full h-full object-contain drop-shadow-lg pointer-events-none"
+                                           draggable={false}
+                                           alt="layer"
+                                        />
                                      )}
                                   </div>
-                                  
-                                  {/* Remove Button (Hide if locked) */}
-                                  {!layer.isLocked && (
-                                    <button 
-                                      onClick={(e) => removeLogoFromCanvas(layer.uid, e)}
-                                      onTouchEnd={(e) => removeLogoFromCanvas(layer.uid, e)}
-                                      className={`absolute -top-6 -right-6 bg-red-500 text-white rounded-full p-1.5 transition-opacity hover:scale-110 shadow-lg z-50 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                                      title="Remove"
-                                    >
-                                      <X size={14} />
-                                    </button>
-                                  )}
-
-                                  {/* Locked Icon Indicator */}
-                                  {layer.isLocked && (
-                                     <div className="absolute -top-6 -right-6 bg-red-500 text-white rounded-full p-1.5 shadow-lg z-50">
-                                         <Lock size={14} />
-                                     </div>
-                                  )}
-
-                                  <img 
-                                     src={logoAsset.data} 
-                                     className="w-full h-full object-contain drop-shadow-lg pointer-events-none"
-                                     draggable={false}
-                                     alt="layer"
-                                  />
-                               </div>
-                            );
-                         })}
+                               );
+                            })}
+                         </div>
                       </div>
                    ) : (
                       <div className="text-center text-zinc-600">

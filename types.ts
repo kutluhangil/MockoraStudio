@@ -13,7 +13,22 @@ export interface Asset {
 
 export interface PlacedLayer {
   uid: string; // unique instance id
-  assetId: string;
+  type?: 'image' | 'text';
+  assetId?: string; // Optional for text layers
+  text?: string;
+  fontFamily?: string;
+  fill?: string;
+  textAlign?: 'left' | 'center' | 'right';
+  curve?: number; // 0 for straight, positive/negative for curve
+  strokeColor?: string;
+  strokeWidth?: number;
+  textBgColor?: string;
+  textBgPadding?: number;
+  textBgRadius?: number;
+  shadowColor?: string;
+  shadowBlur?: number;
+  shadowOffsetX?: number;
+  shadowOffsetY?: number;
   x: number; // percentage 0-100
   y: number; // percentage 0-100
   scale: number; // 1 = 100%
@@ -22,6 +37,18 @@ export interface PlacedLayer {
   blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity';
   isLocked?: boolean;
   groupId?: string;
+}
+
+export interface CustomFont {
+  name: string;
+  url: string;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  layers: PlacedLayer[];
+  productId?: string;
 }
 
 export interface GeneratedMockup {
