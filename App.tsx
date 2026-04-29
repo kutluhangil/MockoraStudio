@@ -1327,9 +1327,17 @@ export default function App() {
                     <p className="text-zinc-400 text-lg max-w-2xl mx-auto mb-10">
                        Upload your logos and products, and let our AI composite them perfectly with realistic lighting, shadows, and warping.
                     </p>
-                    <Button size="lg" onClick={() => setView('assets')} icon={<ArrowRight size={20} />}>
-                       Start Creating
-                    </Button>
+                    <div className="flex gap-4 justify-center">
+                       <Button size="lg" onClick={() => setView('assets')} icon={<ArrowRight size={20} />}>
+                          Start Creating
+                       </Button>
+                       <Button size="lg" variant="secondary" onClick={handleExportProject} icon={<Save size={20} />}>
+                          Export Project
+                       </Button>
+                       <Button size="lg" variant="secondary" onClick={handleImportProject} icon={<Upload size={20} />}>
+                          Import Project
+                       </Button>
+                    </div>
                  </div>
 
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

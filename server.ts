@@ -19,7 +19,7 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-  const ai = new GoogleGenAI({ apiKey: process.env.VITE_GEMINI_API_KEY }); // The env variable requested is VITE_GEMINI_API_KEY
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
   const getBase64Data = (dataUrl: string): string => {
     if (!dataUrl) return "";
@@ -172,7 +172,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(\`Server running on http://localhost:\${PORT}\`);
+    console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
