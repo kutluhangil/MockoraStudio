@@ -46,7 +46,7 @@ export const generateAsset = async (prompt: string, type: 'logo' | 'product'): P
    }
 }
 
-export const generateRealtimeComposite = async (
+  export const generateRealtimeComposite = async (
     compositeImageBase64: string,
     prompt: string = "Make this look like a real photo"
   ): Promise<string> => {
@@ -67,3 +67,25 @@ export const generateRealtimeComposite = async (
       throw error;
     }
   };
+
+export const removeBackground = async (
+  imageBase64: string,
+  mimeType?: string
+): Promise<string> => {
+  try {
+    const response = await fetch("/api/remove-background", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64, mimeType })
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || 'Failed to remove background');
+    }
+    const data = await response.json();
+    return data.result;
+  } catch (error) {
+    console.error("Background removal failed:", error);
+    throw error;
+  }
+};

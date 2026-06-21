@@ -37,6 +37,7 @@ export interface PlacedLayer {
   blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity';
   isLocked?: boolean;
   groupId?: string;
+  aspectLocked?: boolean;
 }
 
 export interface CustomFont {

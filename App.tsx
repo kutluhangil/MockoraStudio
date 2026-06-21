@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2, Lock, Unlock, GripVertical, Type, Save, FileDown, Pipette, Upload, Group, Copy, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from 'lucide-react';
+import { Layout, Box, Image as ImageIcon, Wand2, Layers, Plus, Trash2, Download, History, Sparkles, Shirt, Move, Maximize, RotateCcw, Zap, Cpu, ArrowRight, Globe, Scan, Camera, Aperture, Repeat, SprayCan, Triangle, Package, Menu, X, Check, MousePointer2, AlignLeft, AlignRight, AlignCenterHorizontal, AlignStartVertical, AlignEndVertical, AlignCenterVertical, Undo, Redo, Settings2, Lock, Unlock, GripVertical, Type, Save, FileDown, Pipette, Upload, Group, Copy, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown, Scissors, Link, Unlink } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from './components/Button';
+import ApiKeyDialog from './components/ApiKeyDialog';
 import { FileUploader } from './components/FileUploader';
-import { generateMockup, generateAsset, generateRealtimeComposite } from './services/geminiService';
+import { generateMockup, generateAsset, generateRealtimeComposite, removeBackground } from './services/geminiService';
 import { Asset, GeneratedMockup, AppView, LoadingState, PlacedLayer, Template, CustomFont } from './types';
 import { toPng } from 'html-to-image';
 import { get, set } from 'idb-keyval';
@@ -336,6 +337,7 @@ const AssetSection = ({
   assets, 
   onAdd, 
   onRemove,
+  onRemoveBg,
   validateApiKey,
   onApiError
 }: { 
@@ -345,6 +347,7 @@ const AssetSection = ({
   assets: Asset[], 
   onAdd: (a: Asset) => void, 
   onRemove: (id: string) => void,
+  onRemoveBg: (id: string) => void,
   validateApiKey: () => Promise<boolean>,
   onApiError: (e: any) => void
 }) => {
@@ -389,8 +392,17 @@ const AssetSection = ({
           {assets.map(asset => (
             <div key={asset.id} className="relative group aspect-square bg-zinc-900 rounded-lg overflow-hidden border border-zinc-700">
                 <img src={asset.data} className="w-full h-full object-contain p-2" alt={asset.name} />
-                <button onClick={() => onRemove(asset.id)} className="absolute top-1 right-1 p-1 bg-red-500/80 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                {/* Remove asset */}
+                <button onClick={() => onRemove(asset.id)} className="absolute top-1 right-1 p-1 bg-red-500/80 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Delete">
                   <Trash2 size={12} />
+                </button>
+                {/* Remove Background */}
+                <button
+                  onClick={() => onRemoveBg(asset.id)}
+                  className="absolute bottom-1 left-1 right-1 py-1 bg-indigo-600/90 text-white rounded text-xs font-semibold opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center justify-center gap-1 backdrop-blur-sm"
+                  title="Remove background with AI"
+                >
+                  <Scissors size={11} /> Remove BG
                 </button>
             </div>
           ))}
@@ -485,10 +497,18 @@ export default function App() {
   const [historyIndex, setHistoryIndex] = useState(0);
   const [draftLogos, setDraftLogos] = useState<PlacedLayer[] | null>(null);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
+  const [aspectRatioLocked, setAspectRatioLocked] = useState(true);
+  const [removingBgId, setRemovingBgId] = useState<string | null>(null);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [batchProductIds, setBatchProductIds] = useState<string[]>([]);
   
   const placedLogos = draftLogos !== null ? draftLogos : (layersHistory[historyIndex] || []);
   
   const [isInitialized, setIsInitialized] = useState(false);
+
+  // --- GALLERY STATE ---
+  const [gallerySearch, setGallerySearch] = useState('');
+  const [galleryProductFilter, setGalleryProductFilter] = useState<string | null>(null);
 
   // Load state from DB
   useEffect(() => {
@@ -499,12 +519,14 @@ export default function App() {
         const storedHistory = await get('mockora_history');
         const storedIndex = await get('mockora_index');
         const storedFonts = await get('mockora_fonts');
+        const storedTemplates = await get('mockora_templates');
 
         if (storedAssets) setAssets(storedAssets);
         if (storedMockups) setGeneratedMockups(storedMockups);
         if (storedHistory) setLayersHistory(storedHistory);
         if (storedIndex !== undefined) setHistoryIndex(storedIndex);
         if (storedFonts) setCustomFonts(storedFonts);
+        if (storedTemplates) setTemplates(storedTemplates);
       } catch (e) {
         console.error('Failed to load state from indexedDB', e);
       } finally {
@@ -535,6 +557,11 @@ export default function App() {
     if (!isInitialized) return;
     set('mockora_fonts', customFonts).catch(console.error);
   }, [customFonts, isInitialized]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    set('mockora_templates', templates).catch(console.error);
+  }, [templates, isInitialized]);
 
   // Export Project JSON
   const handleExportProject = async () => {
@@ -770,7 +797,7 @@ export default function App() {
     }
 
     if (shouldOpenDialog) {
-      setShowApiKeyDialog(true);
+      // showApiKeyDialog is a no-op mock since API key is hardcoded server-side
     } else {
       alert(`Operation failed: ${errorMessage}`);
     }
@@ -1083,6 +1110,101 @@ export default function App() {
   }, [draggedItem]);
 
 
+  // --- BACKGROUND REMOVAL ---
+  const handleRemoveBackground = async (assetId: string) => {
+    const asset = assets.find(a => a.id === assetId);
+    if (!asset) return;
+    if (!(await validateApiKey())) return;
+    setRemovingBgId(assetId);
+    try {
+      const resultBase64 = await removeBackground(asset.data, asset.mimeType);
+      setAssets(prev => prev.map(a => a.id === assetId
+        ? { ...a, data: resultBase64, mimeType: 'image/png', name: a.name.replace(/\.[^.]+$/, '') + '_no-bg.png' }
+        : a
+      ));
+    } catch (err: any) {
+      console.error('BG removal failed:', err);
+      handleApiError(err);
+    } finally {
+      setRemovingBgId(null);
+    }
+  };
+
+  // --- BATCH MOCKUP GENERATION ---
+  const handleBatchGenerate = async () => {
+    if (batchProductIds.length === 0 || placedLogos.length === 0) return;
+    if (!(await validateApiKey())) return;
+    setShowBatchModal(false);
+    setLoading({ isGenerating: true, message: `Batch generating 0/${batchProductIds.length}...` });
+    const productAssets = assets.filter(a => batchProductIds.includes(a.id));
+    const logoLayers = placedLogos.filter(l => l.type !== 'text');
+    const logoLayerData = logoLayers.map(l => ({
+      asset: assets.find(a => a.id === l.assetId)!,
+      placement: l
+    })).filter(l => l.asset);
+
+    const results = await Promise.allSettled(
+      productAssets.map((product, i) =>
+        generateMockup(product, logoLayerData, prompt || 'Professional product mockup')
+          .then(url => {
+            setLoading({ isGenerating: true, message: `Batch generating ${i + 1}/${batchProductIds.length}...` });
+            return { product, url };
+          })
+      )
+    );
+
+    const newMockups: GeneratedMockup[] = results
+      .filter(r => r.status === 'fulfilled')
+      .map((r: any) => ({
+        id: Math.random().toString(36).substring(7),
+        imageUrl: r.value.url,
+        prompt: `[Batch] ${r.value.product.name} — ${prompt || 'Auto-generated'}`,
+        createdAt: Date.now(),
+        layers: placedLogos,
+        productId: r.value.product.id
+      }));
+
+    setGeneratedMockups(prev => [...newMockups, ...prev]);
+    const failed = results.filter(r => r.status === 'rejected').length;
+    setLoading({ isGenerating: false, message: '' });
+    if (failed > 0) alert(`${newMockups.length} mockups created. ${failed} failed.`);
+    if (newMockups.length > 0) setView('gallery');
+  };
+
+  // Realistic Preview — canvas snapshot → realtime composite API
+  const handleRealisticPreview = async () => {
+    const printArea = document.getElementById('print-area');
+    if (!printArea || !selectedProductId) return;
+    try {
+      setLoading({ isGenerating: true, message: 'Rendering realistic preview...' });
+      const hides = printArea.querySelectorAll('.export-hide');
+      hides.forEach(el => (el as HTMLElement).style.display = 'none');
+      // Capture the full canvas container (product + overlays)
+      const canvasEl = canvasRef.current;
+      if (!canvasEl) { hides.forEach(el => (el as HTMLElement).style.display = ''); return; }
+      const { toPng: capturePng } = await import('html-to-image');
+      const dataUrl = await capturePng(canvasEl, { cacheBust: true, pixelRatio: 2 });
+      hides.forEach(el => (el as HTMLElement).style.display = '');
+      const bgInstruction = bgPrompt ? `Place the product in a scene: ${bgPrompt}` : 'Make this look like a professional studio photo with realistic lighting and shadows';
+      const realisticUrl = await generateRealtimeComposite(dataUrl, bgInstruction);
+      const newMockup: GeneratedMockup = {
+        id: Math.random().toString(36).substring(7),
+        imageUrl: realisticUrl,
+        prompt: `[Realistic Preview] ${bgInstruction}`,
+        createdAt: Date.now(),
+        layers: placedLogos,
+        productId: selectedProductId
+      };
+      setGeneratedMockups(prev => [newMockup, ...prev]);
+      setSelectedMockup(newMockup);
+    } catch (err: any) {
+      console.error('Realistic preview failed:', err);
+      handleApiError(err);
+    } finally {
+      setLoading({ isGenerating: false, message: '' });
+    }
+  };
+
   const handleGenerate = async () => {
     // We don't return early for empty selections here so we can give better user feedback
     if (!selectedProductId && placedLogos.length === 0) {
@@ -1300,7 +1422,57 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Content */}
+      {/* Batch Generate Modal */}
+      {showBatchModal && (
+        <div className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={() => setShowBatchModal(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-bold mb-1 flex items-center gap-2"><Layers size={18} className="text-indigo-400" /> Batch Mockup Generator</h2>
+            <p className="text-sm text-zinc-400 mb-4">Select which products to generate mockups for. Current canvas layout will be applied to all selected products.</p>
+            <div className="space-y-2 mb-6 max-h-60 overflow-y-auto">
+              {assets.filter(a => a.type === 'product').map(product => (
+                <label key={product.id} className="flex items-center gap-3 p-3 rounded-lg bg-zinc-800 hover:bg-zinc-750 cursor-pointer border border-zinc-700 has-[:checked]:border-indigo-600 has-[:checked]:bg-indigo-950/30 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={batchProductIds.includes(product.id)}
+                    onChange={e => {
+                      if (e.target.checked) setBatchProductIds(prev => [...prev, product.id]);
+                      else setBatchProductIds(prev => prev.filter(id => id !== product.id));
+                    }}
+                    className="w-4 h-4 accent-indigo-500"
+                  />
+                  <img src={product.data} alt={product.name} className="w-10 h-10 object-contain rounded bg-zinc-700 p-1 flex-shrink-0" />
+                  <span className="text-sm font-medium truncate">{product.name}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowBatchModal(false)} className="flex-1 py-2 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors text-sm font-semibold">Cancel</button>
+              <button
+                onClick={handleBatchGenerate}
+                disabled={batchProductIds.length === 0}
+                className={`flex-1 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 transition-colors text-sm font-semibold flex items-center justify-center gap-2 ${batchProductIds.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <Wand2 size={15} /> Generate {batchProductIds.length} Mockup{batchProductIds.length !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Background Removal Loading Overlay */}
+      {removingBgId && (
+        <div className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-8 flex flex-col items-center gap-4 shadow-2xl">
+            <div className="w-14 h-14 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" />
+            <div className="text-center">
+              <p className="text-white font-semibold">Removing Background</p>
+              <p className="text-zinc-400 text-sm mt-1">AI is processing your image...</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       <main className="flex-1 overflow-y-auto relative pt-16 md:pt-0">
         {/* Top Bar */}
         <div className="sticky top-0 z-40 h-16 bg-black/80 backdrop-blur-md border-b border-zinc-800 flex items-center justify-between px-8">
@@ -1378,6 +1550,7 @@ export default function App() {
                     assets={assets.filter(a => a.type === 'product')}
                     onAdd={(a) => setAssets(prev => [...prev, a])}
                     onRemove={(id) => setAssets(prev => prev.filter(a => a.id !== id))}
+                    onRemoveBg={handleRemoveBackground}
                     validateApiKey={validateApiKey}
                     onApiError={handleApiError}
                   />
@@ -1390,6 +1563,7 @@ export default function App() {
                     assets={assets.filter(a => a.type === 'logo')}
                     onAdd={(a) => setAssets(prev => [...prev, a])}
                     onRemove={(id) => setAssets(prev => prev.filter(a => a.id !== id))}
+                    onRemoveBg={handleRemoveBackground}
                     validateApiKey={validateApiKey}
                     onApiError={handleApiError}
                   />
@@ -1574,9 +1748,21 @@ export default function App() {
                                   ) : (
                                      <>
                                         <div>
-                                           <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Scale</span><span>{Math.round(layer.scale * 100)}%</span></div>
-                                           <input type="range" min="0.1" max="4" step="0.05" value={layer.scale} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ scale: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
-                                        </div>
+                                            <div className="flex justify-between items-center text-xs mb-1">
+                                               <span className="text-zinc-400">Scale</span>
+                                               <div className="flex items-center gap-2">
+                                                  <span>{Math.round(layer.scale * 100)}%</span>
+                                                  <button
+                                                     title={layer.aspectLocked !== false ? 'Aspect Locked' : 'Aspect Unlocked'}
+                                                     onClick={() => updateSelectedLayerProperties({ aspectLocked: !(layer.aspectLocked !== false) })}
+                                                     className={`p-0.5 rounded transition-colors ${layer.aspectLocked !== false ? 'text-indigo-400 hover:text-indigo-300' : 'text-zinc-600 hover:text-zinc-400'}`}
+                                                  >
+                                                     {layer.aspectLocked !== false ? <Link size={12} /> : <Unlink size={12} />}
+                                                  </button>
+                                               </div>
+                                            </div>
+                                            <input type="range" min="0.1" max="4" step="0.05" value={layer.scale} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ scale: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
+                                         </div>
                                         <div>
                                            <div className="flex justify-between text-xs mb-1"><span className="text-zinc-400">Rotation</span><span>{Math.round(layer.rotation)}°</span></div>
                                            <input type="range" min="-180" max="180" step="1" value={layer.rotation} disabled={allLocked} onChange={(e) => updateSelectedLayerProperties({ rotation: parseFloat(e.target.value) })} className="w-full accent-indigo-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50" />
@@ -1729,7 +1915,7 @@ export default function App() {
                                         {allLocked ? 'Unlock Selected' : 'Lock Selected'}
                                      </button>
                                   </div>
-                                  {selectedLayerIds.length > 1 && (!layer.groupId || !selectedLayerIds.every(id => placedLogos.find(x => x.uid === id)?.groupId === layer.groupId)) && (
+                                  {selectedLayerIds.length > 1 && (!layer.groupId || !selectedLayerIds.every(id => placedLogos.find(l => l.uid === id)?.groupId === layer.groupId)) && (
                                      <div className="pt-2 border-t border-zinc-800">
                                         <button 
                                            onClick={() => {
@@ -1815,7 +2001,6 @@ export default function App() {
                                      onDragStart={(e) => {
                                         setDraggedLayerIdx(actualIndex);
                                         e.dataTransfer.effectAllowed = 'move';
-                                        // Slight delay to prevent the dragged element from snapping back immediately on some browsers
                                      }}
                                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
                                      onDrop={(e) => handleDropLayer(e, actualIndex)}
@@ -1824,7 +2009,6 @@ export default function App() {
                                              if (isSelected) setSelectedLayerIds(prev => prev.filter(id => id !== layer.uid));
                                              else setSelectedLayerIds(prev => [...prev, layer.uid]);
                                          } else {
-                                             // If grouped, select the whole group
                                              if (layer.groupId) {
                                                  const groupLayers = placedLogos.filter(l => l.groupId === layer.groupId).map(l => l.uid);
                                                  setSelectedLayerIds(groupLayers);
@@ -1853,23 +2037,27 @@ export default function App() {
                    )}
 
                    {templates.length > 0 && (
-                      <div>
-                         <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Saved Templates</h3>
-                         <div className="grid grid-cols-2 gap-2">
-                            {templates.map(t => (
-                               <div key={t.id} onClick={() => {
-                                  pushHistory(t.layers);
-                                  if (t.productId) setSelectedProductId(t.productId);
-                                  setSelectedLayerIds([]);
-                               }} className="rounded-lg border-2 cursor-pointer p-2 transition-all border-zinc-700 hover:border-indigo-500 bg-zinc-900 group flex items-center justify-between text-zinc-300 hover:text-white">
-                                 <span className="truncate text-sm">{t.name}</span> 
-                                 <FileDown size={14} className="text-zinc-500 group-hover:text-indigo-400 opacity-50 group-hover:opacity-100 flex-shrink-0"/>
-                               </div>
-                            ))}
-                         </div>
-                      </div>
-                   )}
-
+                       <div>
+                          <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Saved Templates</h3>
+                          <div className="grid grid-cols-2 gap-2">
+                             {templates.map(t => (
+                                <div key={t.id} className="rounded-lg border-2 transition-all border-zinc-700 hover:border-indigo-500 bg-zinc-900 group flex items-center justify-between text-zinc-300 hover:text-white overflow-hidden">
+                                  <button onClick={() => {
+                                     pushHistory(t.layers);
+                                     if (t.productId) setSelectedProductId(t.productId);
+                                     setSelectedLayerIds([]);
+                                  }} className="flex-1 flex items-center gap-2 p-2 text-left">
+                                    <FileDown size={14} className="text-zinc-500 group-hover:text-indigo-400 opacity-50 group-hover:opacity-100 flex-shrink-0"/>
+                                    <span className="truncate text-sm">{t.name}</span>
+                                  </button>
+                                  <button onClick={() => setTemplates(prev => prev.filter(x => x.id !== t.id))} className="p-2 text-zinc-600 hover:text-red-400 transition-colors flex-shrink-0" title="Delete template">
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                             ))}
+                          </div>
+                       </div>
+                    )}
                    <div>
                       <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">4. Instructions & Environment</h3>
                       <div className="space-y-3">
@@ -1889,16 +2077,32 @@ export default function App() {
                       </div>
                    </div>
 
-                   <Button 
-                      onClick={handleGenerate} 
-                      isLoading={loading.isGenerating} 
-                      disabled={!selectedProductId || placedLogos.length === 0} 
-                      size="lg" 
-                      className="mt-auto"
-                      icon={<Wand2 size={18} />}
-                   >
-                      Generate Mockup
-                   </Button>
+                   <div className="flex gap-2">
+                    <Button 
+                       onClick={handleGenerate} 
+                       isLoading={loading.isGenerating} 
+                       disabled={!selectedProductId || placedLogos.length === 0} 
+                       size="lg" 
+                       className="mt-auto flex-1"
+                       icon={<Wand2 size={18} />}
+                    >
+                       Generate Mockup
+                    </Button>
+                    {assets.filter(a => a.type === 'product').length > 1 && (
+                      <button
+                        onClick={() => {
+                          setBatchProductIds(assets.filter(a => a.type === 'product').map(a => a.id));
+                          setShowBatchModal(true);
+                        }}
+                        disabled={placedLogos.length === 0 || loading.isGenerating}
+                        className={`mt-auto px-3 py-2 rounded-xl border border-indigo-700 bg-indigo-900/30 text-indigo-300 hover:bg-indigo-800/40 transition-colors text-sm font-semibold flex items-center gap-1.5 flex-shrink-0 ${(placedLogos.length === 0 || loading.isGenerating) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title="Batch generate for multiple products"
+                      >
+                        <Layers size={15} />
+                        <span className="hidden sm:inline">Batch</span>
+                      </button>
+                    )}
+                    </div>
                 </div>
 
                 {/* Right Preview - Canvas (Top on Mobile) */}
@@ -1951,33 +2155,37 @@ export default function App() {
                            </div>
                            </>
                            )}
+                           {/* Realistic Preview Button */}
+                            <button onClick={handleRealisticPreview} disabled={!selectedProductId || loading.isGenerating} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-purple-500/20 text-purple-400 transition-colors shadow-lg flex items-center gap-2 text-sm font-semibold ${(!selectedProductId || loading.isGenerating) ? 'opacity-50 cursor-not-allowed' : ''}`} title="Generate Realistic Preview (AI)">
+                                <Sparkles size={16} /> <span className="hidden sm:inline">AI Preview</span>
+                            </button>
 
-                           <button onClick={async () => {
-                               const printArea = document.getElementById('print-area');
-                               if (!printArea) return;
-                               try {
-                                   setLoading({ isGenerating: true, message: 'Exporting transparent PNG...' });
-                                   // briefly hide export-hide elements using a class
-                                   const hides = printArea.querySelectorAll('.export-hide');
-                                   hides.forEach(el => (el as HTMLElement).style.display = 'none');
-                                   
-                                   const dataUrl = await toPng(printArea, { cacheBust: true, pixelRatio: 2 });
-                                   
-                                   hides.forEach(el => (el as HTMLElement).style.display = '');
-                                   
-                                   const link = document.createElement('a');
-                                   link.download = `print-export-${Date.now()}.png`;
-                                   link.href = dataUrl;
-                                   link.click();
-                               } catch (err) {
-                                   console.error('Export failed', err);
-                                   alert('Export failed. Check console.');
-                               } finally {
-                                   setLoading({ isGenerating: false, message: '' });
-                               }
-                           }} disabled={placedLogos.length === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-indigo-500/20 text-indigo-400 transition-colors shadow-lg flex items-center gap-2 text-sm font-semibold ${placedLogos.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`} title="Export Print File (Transparent PNG)">
-                               <Download size={16} /> <span className="hidden sm:inline">Export PNG</span>
-                           </button>
+                            <button onClick={async () => {
+                                const printArea = document.getElementById('print-area');
+                                if (!printArea) return;
+                                try {
+                                    setLoading({ isGenerating: true, message: 'Exporting transparent PNG...' });
+                                    // briefly hide export-hide elements using a class
+                                    const hides = printArea.querySelectorAll('.export-hide');
+                                    hides.forEach(el => (el as HTMLElement).style.display = 'none');
+                                    
+                                    const dataUrl = await toPng(printArea, { cacheBust: true, pixelRatio: 2 });
+                                    
+                                    hides.forEach(el => (el as HTMLElement).style.display = '');
+                                    
+                                    const link = document.createElement('a');
+                                    link.download = `print-export-${Date.now()}.png`;
+                                    link.href = dataUrl;
+                                    link.click();
+                                } catch (err) {
+                                    console.error('Export failed', err);
+                                    alert('Export failed. Check console.');
+                                } finally {
+                                    setLoading({ isGenerating: false, message: '' });
+                                }
+                            }} disabled={placedLogos.length === 0} className={`p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-indigo-500/20 text-indigo-400 transition-colors shadow-lg flex items-center gap-2 text-sm font-semibold ${placedLogos.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`} title="Export Print File (Transparent PNG)">
+                                <Download size={16} /> <span className="hidden sm:inline">Export PNG</span>
+                             </button>
                        </div>
                    </div>
 
@@ -1993,10 +2201,6 @@ export default function App() {
                          ref={canvasRef}
                          className="relative w-full h-full max-h-[600px] p-4"
                       >
-                         {/* Product Base and design container combined for export if needed, 
-                             but we will export only the overlay part. Wait, they need the design area. 
-                             Usually a print export is just the logos but bounded safely. 
-                             We'll wrap the overlays in their own ref. */}
                          <div className="absolute inset-4 rounded-xl overflow-hidden" style={{ 
                              background: productGradientEnabled 
                                  ? (productGradientType === 'linear' ? `linear-gradient(${productGradientAngle}deg, ${productGradientColor1}, ${productGradientColor2})` : `radial-gradient(circle, ${productGradientColor1}, ${productGradientColor2})`) 
@@ -2045,20 +2249,45 @@ export default function App() {
                                      onTouchStart={(e) => handleTouchStart(e, layer)}
                                      onWheel={(e) => handleWheel(e, layer.uid)}
                                   >
-                                     {/* Selection Border */}
+                                     {/* Selection Border & Bounding Box Handles */}
                                      <div className={`absolute -inset-2 border-2 rounded-lg transition-all pointer-events-none export-hide ${isSelected ? (layer.isLocked ? 'border-red-500/50 bg-red-500/5' : 'border-indigo-500 bg-indigo-500/10') : 'border-indigo-500/0 group-hover:border-indigo-500/30'}`}>
-                                        {isSelected && !layer.isLocked && (
-                                            <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
-                                        )}
-                                        {isSelected && !layer.isLocked && (
-                                            <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
-                                        )}
-                                        {isSelected && !layer.isLocked && (
-                                            <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
-                                        )}
-                                        {isSelected && !layer.isLocked && (
-                                            <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-indigo-500 rounded-full"></div>
-                                        )}
+                                        {isSelected && !layer.isLocked && (() => {
+                                          const handleScale = (e: React.MouseEvent, dirX: number, dirY: number) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            const startX = e.clientX;
+                                            const startY = e.clientY;
+                                            const startScale = layer.scale;
+                                            const onMove = (mv: MouseEvent) => {
+                                              const dx = (mv.clientX - startX) * dirX;
+                                              const dy = (mv.clientY - startY) * dirY;
+                                              const delta = (dx + dy) / 200;
+                                              const newScale = Math.max(0.05, Math.min(5, startScale + delta));
+                                              updateSelectedLayerProperties({ scale: newScale });
+                                            };
+                                            const onUp = () => {
+                                              window.removeEventListener('mousemove', onMove);
+                                              window.removeEventListener('mouseup', onUp);
+                                            };
+                                            window.addEventListener('mousemove', onMove);
+                                            window.addEventListener('mouseup', onUp);
+                                          };
+                                          const handles = [
+                                            { cls: 'absolute -top-2 -left-2', dir: [-1, -1], cursor: 'nw-resize' },
+                                            { cls: 'absolute -top-2 -right-2', dir: [1, -1], cursor: 'ne-resize' },
+                                            { cls: 'absolute -bottom-2 -left-2', dir: [-1, 1], cursor: 'sw-resize' },
+                                            { cls: 'absolute -bottom-2 -right-2', dir: [1, 1], cursor: 'se-resize' },
+                                          ];
+                                          return handles.map((h, i) => (
+                                            <div
+                                              key={i}
+                                              className={`${h.cls} w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full pointer-events-auto shadow-md hover:bg-indigo-100 hover:scale-125 transition-transform`}
+                                              style={{ cursor: h.cursor }}
+                                              onMouseDown={(e) => handleScale(e, h.dir[0], h.dir[1])}
+                                              title="Drag to resize"
+                                            />
+                                          ));
+                                        })()}
                                      </div>
                                      
                                      {/* Remove Button (Hide if locked) */}
@@ -2088,7 +2317,7 @@ export default function App() {
                                               color: layer.fill, 
                                               fontSize: 'clamp(1rem, 5vw, 4rem)',
                                               textAlign: layer.textAlign || 'center',
-                                              transform: layer.curve ? `skewX(${layer.curve / 10}deg)` /* Fallback curve styling */ : 'none',
+                                              transform: layer.curve ? `skewX(${layer.curve / 10}deg)` : 'none',
                                               WebkitTextStroke: layer.strokeWidth ? `${layer.strokeWidth}px ${layer.strokeColor || '#000000'}` : undefined,
                                               backgroundColor: layer.textBgColor,
                                               padding: layer.textBgPadding !== undefined ? `${layer.textBgPadding}px` : (layer.textBgColor ? '8px 16px' : '0px'),
@@ -2122,54 +2351,121 @@ export default function App() {
            )}
 
            {/* --- GALLERY VIEW --- */}
-           {view === 'gallery' && (
-              <div className="animate-fade-in">
-                 <div className="flex items-center justify-between mb-8">
-                    <h2 className="text-2xl font-bold">Generated Mockups</h2>
-                    <Button variant="outline" onClick={() => setView('studio')} icon={<Plus size={16}/>}>New Mockup</Button>
-                 </div>
+           {view === 'gallery' && (() => {
+              const filteredMockups = generatedMockups.filter(m => {
+                const matchesSearch = !gallerySearch || (m.prompt || '').toLowerCase().includes(gallerySearch.toLowerCase());
+                const matchesProduct = !galleryProductFilter || m.productId === galleryProductFilter;
+                return matchesSearch && matchesProduct;
+              });
+              const productOptions = assets.filter(a => a.type === 'product');
+              return (
+               <div className="animate-fade-in">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+                     <div>
+                        <h2 className="text-2xl font-bold">Generated Mockups</h2>
+                        <p className="text-sm text-zinc-500 mt-1">{filteredMockups.length} of {generatedMockups.length} shown</p>
+                     </div>
+                     <Button variant="outline" onClick={() => setView('studio')} icon={<Plus size={16}/>}>New Mockup</Button>
+                  </div>
 
-                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {generatedMockups.map(mockup => (
-                       <div key={mockup.id} className="group glass-panel rounded-xl overflow-hidden">
-                          <div className="aspect-square bg-zinc-900 relative overflow-hidden">
-                             <img src={mockup.imageUrl} className="w-full h-full object-cover transition-transform group-hover:scale-105" alt="Mockup" />
-                             <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                <Button 
-                                  size="sm" 
-                                  variant="secondary" 
-                                  icon={<Maximize size={16}/>}
-                                  onClick={() => setSelectedMockup(mockup)}
-                                >
-                                  View
-                                </Button>
-                                <a href={mockup.imageUrl} download={`mockup-${mockup.id}.png`}>
-                                  <Button size="sm" variant="primary" icon={<Download size={16}/>}>Save</Button>
-                                </a>
-                             </div>
-                          </div>
-                          <div className="p-4">
-                             <p className="text-xs text-zinc-500 mb-1">{new Date(mockup.createdAt).toLocaleDateString()}</p>
-                             <p className="text-sm text-zinc-300 line-clamp-2">{mockup.prompt || "Auto-generated mockup"}</p>
-                             {mockup.layers && mockup.layers.length > 0 && (
-                                 <div className="mt-2 flex gap-1">
-                                     <span className="text-xs px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">{mockup.layers.length} logos</span>
-                                 </div>
-                             )}
-                          </div>
-                       </div>
-                    ))}
-                    {generatedMockups.length === 0 && (
-                       <div className="col-span-full py-20 text-center glass-panel rounded-xl">
-                          <ImageIcon size={48} className="mx-auto mb-4 text-zinc-700" />
-                          <h3 className="text-lg font-medium text-zinc-300">No mockups yet</h3>
-                          <p className="text-zinc-500 mb-6">Create your first design in the Studio</p>
-                          <Button onClick={() => setView('studio')}>Go to Studio</Button>
-                       </div>
-                    )}
-                 </div>
-              </div>
-           )}
+                  {generatedMockups.length > 0 && (
+                     <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                        <div className="relative flex-1">
+                           <Scan size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                           <input
+                              type="text"
+                              placeholder="Search by prompt..."
+                              value={gallerySearch}
+                              onChange={e => setGallerySearch(e.target.value)}
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none placeholder:text-zinc-600"
+                           />
+                        </div>
+                        {productOptions.length > 1 && (
+                           <select
+                              value={galleryProductFilter || ''}
+                              onChange={e => setGalleryProductFilter(e.target.value || null)}
+                              className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                           >
+                              <option value="">All Products</option>
+                              {productOptions.map(p => (
+                                 <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                           </select>
+                        )}
+                        {(gallerySearch || galleryProductFilter) && (
+                           <button
+                              onClick={() => { setGallerySearch(''); setGalleryProductFilter(null); }}
+                              className="px-3 py-2 text-xs text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-700 rounded-lg transition-colors"
+                           >
+                              Clear
+                           </button>
+                        )}
+                     </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                     {filteredMockups.map(mockup => (
+                        <div key={mockup.id} className="group glass-panel rounded-xl overflow-hidden">
+                           <div className="aspect-square bg-zinc-900 relative overflow-hidden">
+                              <img src={mockup.imageUrl} className="w-full h-full object-cover transition-transform group-hover:scale-105" alt="Mockup" />
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                 <Button 
+                                   size="sm" 
+                                   variant="secondary" 
+                                   icon={<Maximize size={16}/>}
+                                   onClick={() => setSelectedMockup(mockup)}
+                                 >
+                                   View
+                                 </Button>
+                                 <a href={mockup.imageUrl} download={`mockup-${mockup.id}.png`}>
+                                   <Button size="sm" variant="primary" icon={<Download size={16}/>}>Save</Button>
+                                 </a>
+                              </div>
+                           </div>
+                           <div className="p-4">
+                              <div className="flex items-start justify-between gap-2 mb-1">
+                                 <p className="text-xs text-zinc-500">{new Date(mockup.createdAt).toLocaleDateString()}</p>
+                                 <button
+                                    onClick={() => setGeneratedMockups(prev => prev.filter(m => m.id !== mockup.id))}
+                                    className="text-zinc-600 hover:text-red-400 transition-colors flex-shrink-0"
+                                    title="Delete mockup"
+                                 >
+                                    <Trash2 size={12} />
+                                 </button>
+                              </div>
+                              <p className="text-sm text-zinc-300 line-clamp-2">{mockup.prompt || "Auto-generated mockup"}</p>
+                              {mockup.layers && mockup.layers.length > 0 && (
+                                  <div className="mt-2 flex gap-1 flex-wrap">
+                                      <span className="text-xs px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400">{mockup.layers.length} logos</span>
+                                      {mockup.productId && assets.find(a => a.id === mockup.productId) && (
+                                         <span className="text-xs px-1.5 py-0.5 bg-indigo-900/40 border border-indigo-800 rounded text-indigo-400">
+                                            {assets.find(a => a.id === mockup.productId)?.name}
+                                         </span>
+                                      )}
+                                  </div>
+                              )}
+                           </div>
+                        </div>
+                     ))}
+                     {filteredMockups.length === 0 && generatedMockups.length > 0 && (
+                        <div className="col-span-full py-16 text-center glass-panel rounded-xl">
+                           <Scan size={40} className="mx-auto mb-3 text-zinc-700" />
+                           <p className="text-zinc-400">No mockups match your search</p>
+                           <button onClick={() => { setGallerySearch(''); setGalleryProductFilter(null); }} className="mt-3 text-sm text-indigo-400 hover:text-indigo-300">Clear filters</button>
+                        </div>
+                     )}
+                     {generatedMockups.length === 0 && (
+                        <div className="col-span-full py-20 text-center glass-panel rounded-xl">
+                           <ImageIcon size={48} className="mx-auto mb-4 text-zinc-700" />
+                           <h3 className="text-lg font-medium text-zinc-300">No mockups yet</h3>
+                           <p className="text-zinc-500 mb-6">Create your first design in the Studio</p>
+                           <Button onClick={() => setView('studio')}>Go to Studio</Button>
+                        </div>
+                     )}
+                  </div>
+               </div>
+              );
+            })()}
         </div>
       </main>
     </div>
